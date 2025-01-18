@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Input } from "./ui/input";
+
 import { SendHorizonal } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
 
 const SendMessage = () => {
   const [message, setMessage] = useState("");

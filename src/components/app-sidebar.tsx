@@ -13,9 +13,10 @@ import {
 } from "@/components/ui/sidebar";
 
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
-import SendMessage from "./send-message";
+
 import { Button } from "./ui/button";
 import { useClipboard } from "@/hooks/use-clipboard";
+import SendMessage from "@/app/room/[id]/_components/send-message";
 
 // This is sample data.
 const messages = [
