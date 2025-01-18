@@ -47,7 +47,7 @@ export function CallControlsBar() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 flex h-16 items-center justify-between border-t bg-background px-4">
-      <div className="text-sm text-muted-foreground flex items-center gap-2">
+      <div className="hidden md:flex text-sm text-muted-foreground items-center gap-2">
         <p>{currentTime}</p>
 
         <header className="flex h-16 shrink-0 items-center gap-2 px-4">
