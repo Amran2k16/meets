@@ -1,16 +1,35 @@
+// app/page.tsx
 "use client";
+
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import io, { Socket } from "socket.io-client";
-
 import mediasoupClient from "mediasoup-client";
 
-import { SOCKET_EVENTS, type ServerMessageData } from "shared";
-import { log } from "console";
+import { SOCKET_EVENTS, type ServerMessageData } from "shared"; // adjust path as needed
 
 export default function SocketPage() {
-  const socketRef = useRef<Socket>(null);
-  const deviceRef = useRef<any>(null);
+  /********************************************************
+   * Events This Client Emits to the Server
+   * ------------------------------------------------------
+   * 1) SOCKET_EVENTS.JOIN_ROOM
+   * 2) SOCKET_EVENTS.GET_ROUTER_CAPABILITIES
+   * 3) SOCKET_EVENTS.CREATE_TRANSPORT
+   * 4) SOCKET_EVENTS.CONNECT_TRANSPORT
+   * 5) SOCKET_EVENTS.PRODUCE
+   * 6) SOCKET_EVENTS.CONSUME
+   *
+   * Events This Client Listens for from the Server
+   * ------------------------------------------------------
+   * 1) SOCKET_EVENTS.CONNECT
+   * 2) SOCKET_EVENTS.CONNECT_ERROR
+   * 3) SOCKET_EVENTS.DISCONNECT
+   * 4) SOCKET_EVENTS.SERVER_MESSAGE
+   * 5) SOCKET_EVENTS.NEW_PRODUCER
+   ********************************************************/
+
+  const socketRef = useRef<Socket | null>(null);
+  const deviceRef = useRef<mediasoupClient.Device | null>(null);
   const sendTransportRef = useRef<any>(null);
   const recvTransportRef = useRef<any>(null);
 
@@ -27,55 +46,72 @@ export default function SocketPage() {
   useEffect(() => {
     const initializeSocketConnection = async () => {
       try {
+        // Basic test to check if server is alive
         const response = await fetch(SERVER_URL + "/");
         const data = await response.text();
-        console.log("HTTP GET RESPONSE :", data);
+        console.log("HTTP GET RESPONSE:", data);
       } catch (error) {
         console.error("Error fetching data from server:", error);
-
         handleFetchError();
       }
+
       // Extract the ID from the dynamic route
       const pathParts = path.split("/");
-      const extractedId = pathParts[pathParts.length - 1]; // The last part of the path
+      const extractedId = pathParts[pathParts.length - 1];
       setId(extractedId);
 
+      // Connect to socket
       socketRef.current = io(SERVER_URL, {
         reconnection: true,
         reconnectionAttempts: 5,
         reconnectionDelay: 1000,
       });
 
-      socketRef.current.on(SOCKET_EVENTS.CONNECT, () => {
-        if (socketRef.current) {
-          console.log(`Socket connected with ID: ${socketRef.current.id}`);
+      // ===================
+      // Set up Listeners
+      // ===================
+      if (socketRef.current) {
+        const s = socketRef.current;
+
+        // Fired upon successful connection
+        s.on(SOCKET_EVENTS.CONNECT, () => {
+          console.log(`Socket connected with ID: ${s.id}`);
+          handleConnect();
+
+          // Join the room after we have a socket connection
           joinRoom(extractedId);
-        }
+        });
 
-        socketRef.current?.on(SOCKET_EVENTS.NEW_PRODUCER, handleNewProducer);
-      });
+        s.on(SOCKET_EVENTS.CONNECT_ERROR, handleConnectError);
+        s.on(SOCKET_EVENTS.DISCONNECT, handleDisconnect);
+        s.on(SOCKET_EVENTS.SERVER_MESSAGE, handleServerMessage);
 
-      socketRef.current.on(SOCKET_EVENTS.CONNECT, handleConnect);
-      socketRef.current.on(SOCKET_EVENTS.CONNECT_ERROR, handleConnectError);
-      socketRef.current.on(SOCKET_EVENTS.DISCONNECT, handleDisconnect);
-      socketRef.current.on(SOCKET_EVENTS.SERVER_MESSAGE, handleServerMessage);
+        // Fired when server notifies about a new producer
+        s.on(SOCKET_EVENTS.NEW_PRODUCER, handleNewProducer);
+      }
 
       return () => {
         if (socketRef.current) {
-          socketRef.current.off(SOCKET_EVENTS.CONNECT, handleConnect);
-          socketRef.current.off(SOCKET_EVENTS.DISCONNECT, handleDisconnect);
-          socketRef.current.off(SOCKET_EVENTS.SERVER_MESSAGE, handleServerMessage);
-          socketRef.current.disconnect();
+          const s = socketRef.current;
+          s.off(SOCKET_EVENTS.CONNECT, handleConnect);
+          s.off(SOCKET_EVENTS.CONNECT_ERROR, handleConnectError);
+          s.off(SOCKET_EVENTS.DISCONNECT, handleDisconnect);
+          s.off(SOCKET_EVENTS.SERVER_MESSAGE, handleServerMessage);
+          s.off(SOCKET_EVENTS.NEW_PRODUCER, handleNewProducer);
+
+          // Disconnect
+          s.disconnect();
           console.log("Disconnected from the WebSocket server");
         }
-
-        console.log("Disconnected from the WebSocket server");
       };
     };
 
     initializeSocketConnection();
   }, [path]);
 
+  // ================================================
+  // Handler Functions for Socket Connection
+  // ================================================
   const handleFetchError = () => {
     setConnected(false);
     setConnectMessage("Failed to get response from HTTP Server");
@@ -103,36 +139,44 @@ export default function SocketPage() {
   };
 
   const handleServerMessage = (data: ServerMessageData) => {
-    console.log("Received welcome message from server:", data.message);
+    console.log("Received server message:", data.message);
   };
 
+  // ================================================
+  // Join Room and Setup Mediasoup
+  // ================================================
   const joinRoom = async (roomId: string) => {
     console.log(`Joining room with ID: ${roomId}`);
 
-    // Join the room and wait for acknowledgment from the server
-    const joinRoomResponse = await new Promise((resolve, reject) => {
-      socketRef.current?.emit(
-        SOCKET_EVENTS.JOIN_ROOM,
-        { roomId },
-        (response: { success: boolean; message: string }) => {
-          if (response?.success) {
-            console.log(`Successfully joined room: ${roomId}`);
-            resolve(response);
-          } else {
-            console.error(`Failed to join room: ${response?.message}`);
-            reject(new Error(response?.message || "Unknown error"));
-          }
+    if (!socketRef.current) return;
+
+    // 1) Request to join the room
+    const joinRoomResponse = await new Promise<{
+      success: boolean;
+      message: string;
+      existingProducerIds: string[];
+    }>((resolve, reject) => {
+      socketRef.current?.emit(SOCKET_EVENTS.JOIN_ROOM, { roomId }, (response: any) => {
+        if (response?.success) {
+          console.log(`Successfully joined room: ${roomId}`);
+          resolve(response);
+        } else {
+          console.error(`Failed to join room: ${response?.message}`);
+          reject(new Error(response?.message || "Unknown error"));
         }
-      );
+      });
     });
 
-    console.log("Room join response:", joinRoomResponse);
+    // 2) Check for existing producers
+    if (joinRoomResponse.existingProducerIds.length > 0) {
+      console.log("Found existing producers:", joinRoomResponse.existingProducerIds);
+      await consumeExistingProducers(joinRoomResponse.existingProducerIds, roomId);
+    }
 
-    // Retrieve RTP capabilities from the server
-    const rtpCapabilities = await new Promise((resolve, reject) => {
+    // 2) Get Router RTP Capabilities
+    const rtpCapabilities = await new Promise<any>((resolve, reject) => {
       console.log("Requesting RTP capabilities from server...");
-      console.log("Room ID:", roomId);
-      socketRef.current?.emit("getRouterRtpCapabilities", { roomId }, (response: any) => {
+      socketRef.current?.emit(SOCKET_EVENTS.GET_ROUTER_CAPABILITIES, { roomId }, (response: any) => {
         if (response?.error) {
           console.error("Failed to retrieve RTP capabilities:", response.error);
           reject(new Error(response.error));
@@ -143,48 +187,123 @@ export default function SocketPage() {
       });
     });
 
-    console.log("RTP Capabilities received from server:", rtpCapabilities);
-
-    // Initialize the mediasoup Device
+    // 3) Create Mediasoup Device
     deviceRef.current = new mediasoupClient.Device();
     await deviceRef.current.load({ routerRtpCapabilities: rtpCapabilities });
-
     console.log("Mediasoup Device loaded");
 
-    // Create transports
+    // 4) Create send and receive transports
     await createSendTransport(roomId);
     await createRecvTransport(roomId);
   };
 
-  // Create a send transport for producing media
+  async function consumeExistingProducers(producerIds: string[], roomId: string) {
+    if (!recvTransportRef.current || !socketRef.current) return;
+
+    for (const producerId of producerIds) {
+      try {
+        const consumerParams = await new Promise<any>((resolve, reject) => {
+          socketRef.current?.emit(
+            SOCKET_EVENTS.CONSUME,
+            {
+              roomId,
+              producerId,
+              transportId: recvTransportRef.current.id,
+            },
+            (response: any) => {
+              if (response.error) {
+                reject(new Error(response.error));
+              } else {
+                resolve(response);
+              }
+            }
+          );
+        });
+
+        // Now create a consumer for that existing producer
+        const consumer = await recvTransportRef.current.consume(consumerParams);
+        const stream = new MediaStream([consumer.track]);
+        setRemoteStreams((prev) => ({ ...prev, [producerId]: stream }));
+
+        consumer.on("trackended", () => {
+          console.log(`Remote track ended for producer: ${producerId}`);
+          setRemoteStreams((prev) => {
+            const updated = { ...prev };
+            delete updated[producerId];
+            return updated;
+          });
+        });
+      } catch (error) {
+        console.error(`Error consuming existing producer ${producerId}:`, error);
+      }
+    }
+  }
+  // ================================================
+  // Create Send Transport
+  // ================================================
   const createSendTransport = async (roomId: string) => {
-    console.log("Creating send transport for producing media");
-    const transportParams = await new Promise((resolve) => {
-      socketRef.current?.emit("createTransport", { roomId, direction: "send" }, resolve);
+    if (!socketRef.current || !deviceRef.current) return;
+
+    // 1) Request transport parameters from server
+    const transportParams = await new Promise<any>((resolve) => {
+      socketRef.current?.emit(SOCKET_EVENTS.CREATE_TRANSPORT, { roomId, direction: "send" }, resolve);
     });
 
+    // 2) Create a local send transport in the client
     sendTransportRef.current = deviceRef.current.createSendTransport(transportParams);
 
-    sendTransportRef.current.on("connect", ({ dtlsParameters }, callback, errback) => {
-      socketRef.current?.emit(
-        "connectTransport",
-        { transportId: sendTransportRef.current.id, dtlsParameters },
-        callback
-      );
+    // 3) Transport event handlers
+    sendTransportRef.current.on(
+      "connect",
+      ({ dtlsParameters }: any, callback: () => void, errback: (error: Error) => void) => {
+        console.log("SendTransport connecting...");
+        socketRef.current?.emit(
+          SOCKET_EVENTS.CONNECT_TRANSPORT,
+          { transportId: sendTransportRef.current.id, dtlsParameters },
+          (response: any) => {
+            if (response?.error) {
+              errback(new Error(response.error));
+            } else {
+              callback();
+            }
+          }
+        );
+      }
+    );
+
+    sendTransportRef.current.on(
+      "produce",
+      async (
+        { kind, rtpParameters }: any,
+        callback: (arg: { id: string }) => void,
+        errback: (error: Error) => void
+      ) => {
+        if (!socketRef.current) return;
+
+        socketRef.current.emit(
+          SOCKET_EVENTS.PRODUCE,
+          {
+            roomId,
+            transportId: sendTransportRef.current.id,
+            kind,
+            rtpParameters,
+          },
+          (response: any) => {
+            if (response?.error) {
+              errback(new Error(response.error));
+            } else {
+              callback({ id: response.id });
+            }
+          }
+        );
+      }
+    );
+
+    sendTransportRef.current.on("connectionstatechange", (state: string) => {
+      console.log(`Send transport state changed: ${state}`);
     });
 
-    sendTransportRef.current.on("produce", async ({ kind, rtpParameters }, callback, errback) => {
-      const producerId = await new Promise((resolve) => {
-        socketRef.current?.emit("produce", { transportId: sendTransportRef.current.id, kind, rtpParameters }, resolve);
-      });
-      callback({ id: producerId });
-    });
-
-    sendTransportRef.current.on("connectionstatechange", (state) => {
-      console.log(`Send transport state: ${state}`);
-    });
-
-    // Start producing media (e.g., video, audio)
+    // 4) Capture local media and produce
     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     setLocalStream(stream);
 
@@ -193,47 +312,98 @@ export default function SocketPage() {
     });
   };
 
-  // Create a recv transport for consuming media
+  // ================================================
+  // Create Receive Transport
+  // ================================================
   const createRecvTransport = async (roomId: string) => {
-    const transportParams = await new Promise((resolve) => {
-      socketRef.current?.emit("createTransport", { roomId, direction: "recv" }, resolve);
+    if (!socketRef.current || !deviceRef.current) return;
+
+    // 1) Request transport params from server
+    const transportParams = await new Promise<any>((resolve) => {
+      socketRef.current?.emit(SOCKET_EVENTS.CREATE_TRANSPORT, { roomId, direction: "recv" }, resolve);
     });
 
+    // 2) Create a local receive transport
     recvTransportRef.current = deviceRef.current.createRecvTransport(transportParams);
 
-    recvTransportRef.current.on("connect", ({ dtlsParameters }, callback, errback) => {
-      socketRef.current?.emit(
-        "connectTransport",
-        { transportId: recvTransportRef.current.id, dtlsParameters },
-        callback
-      );
-    });
+    // 3) Transport event handlers
+    recvTransportRef.current.on(
+      "connect",
+      ({ dtlsParameters }: any, callback: () => void, errback: (error: Error) => void) => {
+        console.log("RecvTransport connecting...");
+        socketRef.current?.emit(
+          SOCKET_EVENTS.CONNECT_TRANSPORT,
+          { transportId: recvTransportRef.current.id, dtlsParameters },
+          (response: any) => {
+            if (response?.error) {
+              errback(new Error(response.error));
+            } else {
+              callback();
+            }
+          }
+        );
+      }
+    );
 
-    recvTransportRef.current.on("connectionstatechange", (state) => {
-      console.log(`Recv transport state: ${state}`);
+    recvTransportRef.current.on("connectionstatechange", (state: string) => {
+      console.log(`Recv transport state changed: ${state}`);
     });
   };
 
-  // Handle new producer
+  // ================================================
+  // Handle a new producer (i.e., someone else joined)
+  // ================================================
   const handleNewProducer = async ({ producerId }: { producerId: string }) => {
-    const consumerParameters = await new Promise((resolve) => {
-      socketRef.current?.emit("consume", { producerId, transportId: recvTransportRef.current.id }, resolve);
-    });
+    try {
+      if (!socketRef.current || !recvTransportRef.current) return;
 
-    const consumer = await recvTransportRef.current.consume(consumerParameters);
+      console.log(`Handling new producer from server: ${producerId}`);
 
-    const stream = new MediaStream([consumer.track]);
-    setRemoteStreams((prev) => ({ ...prev, [producerId]: stream }));
-
-    consumer.on("trackended", () => {
-      setRemoteStreams((prev) => {
-        const updated = { ...prev };
-        delete updated[producerId];
-        return updated;
+      const consumerParameters = await new Promise<any>((resolve, reject) => {
+        socketRef.current?.emit(
+          SOCKET_EVENTS.CONSUME,
+          {
+            roomId: path.split("/").pop() || "", // dynamically extract the latest id from the path
+            producerId,
+            transportId: recvTransportRef.current.id,
+          },
+          (response: any) => {
+            if (response.error) {
+              reject(new Error(response.error));
+            } else {
+              resolve(response);
+            }
+          }
+        );
       });
-    });
+
+      console.log("Consumer parameters:", consumerParameters);
+
+      // Create a new consumer
+      const consumer = await recvTransportRef.current.consume(consumerParameters);
+      console.log(`Consumer created for producer: ${producerId}`);
+
+      // Attach the consumer track to a new MediaStream
+      const stream = new MediaStream([consumer.track]);
+      setRemoteStreams((prev) => ({ ...prev, [producerId]: stream }));
+
+      // Clean up on track end
+      consumer.on("trackended", () => {
+        console.log(`Remote track ended for producer: ${producerId}`);
+        setRemoteStreams((prev) => {
+          const updated = { ...prev };
+          delete updated[producerId];
+          return updated;
+        });
+      });
+    } catch (error: any) {
+      console.error(`Error handling new producer ${producerId}:`, error.message);
+    }
   };
 
+  // ================================================
+  // Render
+  // ================================================
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen space-y-4">
@@ -246,6 +416,7 @@ export default function SocketPage() {
     <div className="flex flex-col items-center space-y-4">
       <h1 className="text-xl font-bold">Room: {id}</h1>
       <div className={`text-lg ${connected ? "text-green-500" : "text-red-500"}`}>{connectMessage}</div>
+
       {/* Local Video */}
       <video
         autoPlay

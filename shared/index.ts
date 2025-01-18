@@ -3,17 +3,24 @@ export const SOCKET_EVENTS = {
   CONNECT_ERROR: "connectError",
   DISCONNECT: "disconnect",
   SERVER_MESSAGE: "serverMessage",
+
+  // Room actions
   JOIN_ROOM: "joinRoom",
   LEAVE_ROOM: "leaveRoom",
+
+  // Media actions
+  CREATE_TRANSPORT: "createTransport",
+  CONNECT_TRANSPORT: "connectTransport",
+  PRODUCE: "produce",
+  CONSUME: "consume",
+  NEW_PRODUCER: "newProducer",
+  GET_ROUTER_CAPABILITIES: "getRouterRtpCapabilities",
+
+  // (These below aren’t used yet in your code but are defined)
   MUTE_MIC: "muteMic",
   MUTE_VIDEO: "muteVideo",
   SEND_ROOM_MESSAGE: "sendRoomMessage",
   ROOM_MESSAGE: "roomMessage",
-  CREATE_TRANSPORT: "createTransport",
-  CONSUME: "consume",
-  PRODUCE: "produce",
-  NEW_PRODUCER: "newProducer",
-  GET_ROUTER_CAPABILITIES: "getRouterRtpCapabilities",
 };
 
 export type ServerMessageData = { message: string };
