@@ -11,6 +11,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { useSidebar } from "./ui/sidebar";
+import {
+  Breadcrumb,
+  BreadcrumbList,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbSeparator,
+  BreadcrumbPage,
+} from "./ui/breadcrumb";
 
 export function CallControlsBar() {
   const currentTime = useCurrentTime();
@@ -39,7 +47,23 @@ export function CallControlsBar() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 flex h-16 items-center justify-between border-t bg-background px-4">
-      <div className="text-sm text-muted-foreground">{currentTime}</div>
+      <div className="text-sm text-muted-foreground flex items-center gap-2">
+        <p>{currentTime}</p>
+
+        <header className="flex h-16 shrink-0 items-center gap-2 px-4">
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem className="hidden md:block">
+                <BreadcrumbLink href="#">Room</BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator className="hidden md:block" />
+              <BreadcrumbItem>
+                <BreadcrumbPage>#123</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        </header>
+      </div>
 
       <div className="flex items-center gap-4">
         <Button
