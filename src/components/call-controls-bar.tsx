@@ -14,8 +14,8 @@ import { useSidebar } from "./ui/sidebar";
 
 export function CallControlsBar() {
   const currentTime = useCurrentTime();
-  const [micEnabled, setMicEnabled] = useState<boolean>(true);
-  const [videoEnabled, setVideoEnabled] = useState<boolean>(true);
+  const [micEnabled, setMicEnabled] = useState<boolean>(false);
+  const [videoEnabled, setVideoEnabled] = useState<boolean>(false);
   const [screenShareEnabled, setScreenShareEnabled] = useState<boolean>(false);
   const [chatEnabled, setChatEnabled] = useState<boolean>(false);
   const { toggleSidebar } = useSidebar();
