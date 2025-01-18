@@ -2,14 +2,15 @@
 
 import { useCurrentTime } from "@/hooks/use-current-time";
 import {
-  Mic2, // Microphone icon
-  Video, // Video camera icon
-  ScreenShare, // Screen share icon
-  PhoneOff, // End call icon
-  MessageSquare, // Chat icon
+  Mic2,
+  Video,
+  ScreenShare,
+  PhoneOff,
+  MessageSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
+import { useSidebar } from "./ui/sidebar";
 
 export function CallControlsBar() {
   const currentTime = useCurrentTime();
@@ -17,6 +18,7 @@ export function CallControlsBar() {
   const [videoEnabled, setVideoEnabled] = useState<boolean>(true);
   const [screenShareEnabled, setScreenShareEnabled] = useState<boolean>(false);
   const [chatEnabled, setChatEnabled] = useState<boolean>(false);
+  const { toggleSidebar } = useSidebar();
 
   const toggleMic = () => {
     setMicEnabled((prev) => !prev);
@@ -31,6 +33,7 @@ export function CallControlsBar() {
   };
 
   const toggleChat = () => {
+    toggleSidebar();
     setChatEnabled((prev) => !prev);
   };
 
