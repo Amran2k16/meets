@@ -13,6 +13,8 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
+import { CallControlsBar } from "@/components/call-controls-bar";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
@@ -42,6 +44,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {children}
       </SidebarInset>
       <AppSidebar />
+
+      <CallControlsBar />
     </SidebarProvider>
   );
 }
