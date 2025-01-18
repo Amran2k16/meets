@@ -4,6 +4,7 @@ import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { VariantProps, cva } from "class-variance-authority";
 import { PanelLeft, X } from "lucide-react";
+import { PAGE_LAYOUT_HEIGHT } from "@/consts/constants";
 
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
@@ -35,8 +36,6 @@ type SidebarContext = {
   isMobile: boolean;
   toggleSidebar: () => void;
 };
-
-const adjustedHeight = "calc(100svh - 80px)";
 
 const SidebarContext = React.createContext<SidebarContext | null>(null);
 
@@ -187,7 +186,7 @@ const Sidebar = React.forwardRef<
             className
           )}
           ref={ref}
-          style={{ height: adjustedHeight }}
+          style={{ height: PAGE_LAYOUT_HEIGHT }}
           {...props}
         >
           {children}
@@ -223,7 +222,7 @@ const Sidebar = React.forwardRef<
         data-collapsible={state === "collapsed" ? collapsible : ""}
         data-variant={variant}
         data-side={side}
-        style={{ height: adjustedHeight }}
+        style={{ height: PAGE_LAYOUT_HEIGHT }}
       >
         {/* This is what handles the sidebar gap on desktop */}
         <div
@@ -249,7 +248,7 @@ const Sidebar = React.forwardRef<
               : "group-data-[collapsible=icon]:w-[--sidebar-width-icon] group-data-[side=left]:border-r group-data-[side=right]:border-l",
             className
           )}
-          style={{ height: adjustedHeight }}
+          style={{ height: PAGE_LAYOUT_HEIGHT }}
           {...props}
         >
           <div
@@ -465,7 +464,7 @@ const SidebarContent = React.forwardRef<
         "flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
         className
       )}
-      style={{ height: adjustedHeight }}
+      style={{ height: PAGE_LAYOUT_HEIGHT }}
       {...props}
     />
   );
@@ -502,7 +501,7 @@ const SidebarGroupLabel = React.forwardRef<
         "group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0",
         className
       )}
-      style={{ height: adjustedHeight }}
+      style={{ height: PAGE_LAYOUT_HEIGHT }}
       {...props}
     />
   );
