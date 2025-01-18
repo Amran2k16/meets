@@ -1,3 +1,12 @@
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PAGE_LAYOUT_HEIGHT } from "@/consts/constants";
 
 export default function Page() {
@@ -19,20 +28,36 @@ export default function Page() {
       {/* Bottom Section */}
       <div className="border bg-white p-4">
         <div className="flex gap-4">
-          <select className="p-2 border rounded">
-            <option>Current Language</option>
-            <option>English</option>
-            <option>Spanish</option>
-            <option>French</option>
-            {/* Add more languages as needed */}
-          </select>
-          <select className="p-2 border rounded">
-            <option>Translation</option>
-            <option>English</option>
-            <option>Spanish</option>
-            <option>French</option>
-            {/* Add more languages as needed */}
-          </select>
+          <Select>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Select spoken language" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectLabel>Fruits</SelectLabel>
+                <SelectItem value="apple">Apple</SelectItem>
+                <SelectItem value="banana">Banana</SelectItem>
+                <SelectItem value="blueberry">Blueberry</SelectItem>
+                <SelectItem value="grapes">Grapes</SelectItem>
+                <SelectItem value="pineapple">Pineapple</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <Select>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Select translation" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectLabel>Fruits</SelectLabel>
+                <SelectItem value="apple">Apple</SelectItem>
+                <SelectItem value="banana">Banana</SelectItem>
+                <SelectItem value="blueberry">Blueberry</SelectItem>
+                <SelectItem value="grapes">Grapes</SelectItem>
+                <SelectItem value="pineapple">Pineapple</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
         <div className="mt-4 p-2 border rounded bg-gray-100">
           <p className="text-sm">
