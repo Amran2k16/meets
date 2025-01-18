@@ -21,14 +21,15 @@
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "lucide-react": "^0.473.0",
+    "mediasoup-client": "^3.8.1",
     "next": "15.1.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "shared": "file:./shared",
     "socket.io-client": "^4.8.1",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
-    "winston": "^3.17.0",
-    "shared": "file:./shared"
+    "winston": "^3.17.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

@@ -82,14 +82,45 @@ io.on("connection", async (socket) => {
   logClientsCount();
 
   // Join a room
-  socket.on(SOCKET_EVENTS.JOIN_ROOM, async ({ roomId }) => {
+  socket.on(SOCKET_EVENTS.JOIN_ROOM, async ({ roomId }, callback) => {
     try {
+      // Ensure the room exists or create it
       const room = await getOrCreateRoom(roomId);
-      console.log(`Socket ${socket.id} joined room: ${roomId}`);
+
+      // Add the socket to the room
       socket.join(roomId);
+      logger.info(`Socket ${socket.id} joined room: ${roomId}`);
+
+      // Emit a success response back to the client
+      callback({ success: true, message: `Joined room: ${roomId}` });
     } catch (error: any) {
-      console.error("Error joining room:", error.message);
-      socket.emit("error", { message: error.message });
+      logger.error("Error joining room:", error.message);
+
+      // Emit an error response back to the client
+      callback({ success: false, message: error.message });
+    }
+  });
+  socket.on("getRouterRtpCapabilities", (data, callback) => {
+    try {
+      logger.info(`Received getRouterRtpCapabilities request from socket: ${socket.id}`);
+
+      const { roomId } = data; // Ensure data contains roomId
+      if (!roomId) {
+        throw new Error("Room ID not provided");
+      }
+
+      const room = rooms.get(roomId);
+      if (!room) {
+        throw new Error(`Room with ID ${roomId} not found`);
+      }
+
+      const rtpCapabilities = room.router.rtpCapabilities;
+      logger.info("RTP Capabilities:", rtpCapabilities);
+
+      callback(rtpCapabilities); // Send RTP Capabilities back to client
+    } catch (error: any) {
+      console.error("Error in getRouterRtpCapabilities:", error.message);
+      callback({ error: error.message }); // Send error response
     }
   });
 
@@ -226,6 +257,7 @@ async function createMediasoupWorker() {
 
 export async function getOrCreateRoom(roomId: string) {
   if (rooms.has(roomId)) {
+    logger.info(`Room ${roomId} already exists. Total rooms: ${rooms.size}`);
     return rooms.get(roomId);
   }
 
@@ -248,6 +280,8 @@ export async function getOrCreateRoom(roomId: string) {
       },
     ],
   });
+
+  logger.info(`Created new router for room: ${roomId}. Total rooms: ${rooms.size + 1}`);
 
   const room = new Room(router);
   rooms.set(roomId, room);

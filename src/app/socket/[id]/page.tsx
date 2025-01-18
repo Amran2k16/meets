@@ -1,12 +1,15 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import io from "socket.io-client";
+import io, { Socket } from "socket.io-client";
+
+import mediasoupClient from "mediasoup-client";
 
 import { SOCKET_EVENTS, type ServerMessageData } from "shared";
+import { log } from "console";
 
 export default function SocketPage() {
-  const socketRef = useRef<any>(null);
+  const socketRef = useRef<Socket>(null);
   const deviceRef = useRef<any>(null);
   const sendTransportRef = useRef<any>(null);
   const recvTransportRef = useRef<any>(null);
@@ -37,26 +40,35 @@ export default function SocketPage() {
       const extractedId = pathParts[pathParts.length - 1]; // The last part of the path
       setId(extractedId);
 
-      const socket = io(SERVER_URL, {
+      socketRef.current = io(SERVER_URL, {
         reconnection: true,
         reconnectionAttempts: 5,
         reconnectionDelay: 1000,
       });
 
-      socket.on(SOCKET_EVENTS.CONNECT, () => {
-        console.log(`Socket connected with ID: ${socket.id}`);
+      socketRef.current.on(SOCKET_EVENTS.CONNECT, () => {
+        if (socketRef.current) {
+          console.log(`Socket connected with ID: ${socketRef.current.id}`);
+          joinRoom(extractedId);
+        }
+
+        socketRef.current?.on(SOCKET_EVENTS.NEW_PRODUCER, handleNewProducer);
       });
 
-      socket.on(SOCKET_EVENTS.CONNECT, handleConnect);
-      socket.on(SOCKET_EVENTS.CONNECT_ERROR, handleConnectError);
-      socket.on(SOCKET_EVENTS.DISCONNECT, handleDisconnect);
-      socket.on(SOCKET_EVENTS.SERVER_MESSAGE, handleServerMessage);
+      socketRef.current.on(SOCKET_EVENTS.CONNECT, handleConnect);
+      socketRef.current.on(SOCKET_EVENTS.CONNECT_ERROR, handleConnectError);
+      socketRef.current.on(SOCKET_EVENTS.DISCONNECT, handleDisconnect);
+      socketRef.current.on(SOCKET_EVENTS.SERVER_MESSAGE, handleServerMessage);
 
       return () => {
-        socket.off(SOCKET_EVENTS.CONNECT, handleConnect);
-        socket.off(SOCKET_EVENTS.DISCONNECT, handleDisconnect);
-        socket.off(SOCKET_EVENTS.SERVER_MESSAGE, handleServerMessage);
-        socket.disconnect();
+        if (socketRef.current) {
+          socketRef.current.off(SOCKET_EVENTS.CONNECT, handleConnect);
+          socketRef.current.off(SOCKET_EVENTS.DISCONNECT, handleDisconnect);
+          socketRef.current.off(SOCKET_EVENTS.SERVER_MESSAGE, handleServerMessage);
+          socketRef.current.disconnect();
+          console.log("Disconnected from the WebSocket server");
+        }
+
         console.log("Disconnected from the WebSocket server");
       };
     };
@@ -94,35 +106,67 @@ export default function SocketPage() {
     console.log("Received welcome message from server:", data.message);
   };
 
-  // Join the room
-  const joinRoom = async () => {
-    socketRef.current.emit("joinRoom", { roomId });
+  const joinRoom = async (roomId: string) => {
+    console.log(`Joining room with ID: ${roomId}`);
 
-    // Load mediasoup Device with RTP Capabilities from server
-    const rtpCapabilities = await new Promise((resolve) => {
-      socketRef.current.emit("getRouterRtpCapabilities", {}, resolve);
+    // Join the room and wait for acknowledgment from the server
+    const joinRoomResponse = await new Promise((resolve, reject) => {
+      socketRef.current?.emit(
+        SOCKET_EVENTS.JOIN_ROOM,
+        { roomId },
+        (response: { success: boolean; message: string }) => {
+          if (response?.success) {
+            console.log(`Successfully joined room: ${roomId}`);
+            resolve(response);
+          } else {
+            console.error(`Failed to join room: ${response?.message}`);
+            reject(new Error(response?.message || "Unknown error"));
+          }
+        }
+      );
     });
 
+    console.log("Room join response:", joinRoomResponse);
+
+    // Retrieve RTP capabilities from the server
+    const rtpCapabilities = await new Promise((resolve, reject) => {
+      console.log("Requesting RTP capabilities from server...");
+      console.log("Room ID:", roomId);
+      socketRef.current?.emit("getRouterRtpCapabilities", { roomId }, (response: any) => {
+        if (response?.error) {
+          console.error("Failed to retrieve RTP capabilities:", response.error);
+          reject(new Error(response.error));
+        } else {
+          console.log("RTP Capabilities received from server:", response);
+          resolve(response);
+        }
+      });
+    });
+
+    console.log("RTP Capabilities received from server:", rtpCapabilities);
+
+    // Initialize the mediasoup Device
     deviceRef.current = new mediasoupClient.Device();
     await deviceRef.current.load({ routerRtpCapabilities: rtpCapabilities });
 
     console.log("Mediasoup Device loaded");
 
     // Create transports
-    await createSendTransport();
-    await createRecvTransport();
+    await createSendTransport(roomId);
+    await createRecvTransport(roomId);
   };
 
   // Create a send transport for producing media
-  const createSendTransport = async () => {
+  const createSendTransport = async (roomId: string) => {
+    console.log("Creating send transport for producing media");
     const transportParams = await new Promise((resolve) => {
-      socketRef.current.emit("createTransport", { direction: "send" }, resolve);
+      socketRef.current?.emit("createTransport", { roomId, direction: "send" }, resolve);
     });
 
     sendTransportRef.current = deviceRef.current.createSendTransport(transportParams);
 
     sendTransportRef.current.on("connect", ({ dtlsParameters }, callback, errback) => {
-      socketRef.current.emit(
+      socketRef.current?.emit(
         "connectTransport",
         { transportId: sendTransportRef.current.id, dtlsParameters },
         callback
@@ -131,7 +175,7 @@ export default function SocketPage() {
 
     sendTransportRef.current.on("produce", async ({ kind, rtpParameters }, callback, errback) => {
       const producerId = await new Promise((resolve) => {
-        socketRef.current.emit("produce", { transportId: sendTransportRef.current.id, kind, rtpParameters }, resolve);
+        socketRef.current?.emit("produce", { transportId: sendTransportRef.current.id, kind, rtpParameters }, resolve);
       });
       callback({ id: producerId });
     });
@@ -150,15 +194,15 @@ export default function SocketPage() {
   };
 
   // Create a recv transport for consuming media
-  const createRecvTransport = async () => {
+  const createRecvTransport = async (roomId: string) => {
     const transportParams = await new Promise((resolve) => {
-      socketRef.current.emit("createTransport", { direction: "recv" }, resolve);
+      socketRef.current?.emit("createTransport", { roomId, direction: "recv" }, resolve);
     });
 
     recvTransportRef.current = deviceRef.current.createRecvTransport(transportParams);
 
     recvTransportRef.current.on("connect", ({ dtlsParameters }, callback, errback) => {
-      socketRef.current.emit(
+      socketRef.current?.emit(
         "connectTransport",
         { transportId: recvTransportRef.current.id, dtlsParameters },
         callback
@@ -173,7 +217,7 @@ export default function SocketPage() {
   // Handle new producer
   const handleNewProducer = async ({ producerId }: { producerId: string }) => {
     const consumerParameters = await new Promise((resolve) => {
-      socketRef.current.emit("consume", { producerId, transportId: recvTransportRef.current.id }, resolve);
+      socketRef.current?.emit("consume", { producerId, transportId: recvTransportRef.current.id }, resolve);
     });
 
     const consumer = await recvTransportRef.current.consume(consumerParameters);
@@ -199,9 +243,38 @@ export default function SocketPage() {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen space-y-4">
-      <div className="text-xl font-bold">Room ID: {id}</div>
+    <div className="flex flex-col items-center space-y-4">
+      <h1 className="text-xl font-bold">Room: {id}</h1>
       <div className={`text-lg ${connected ? "text-green-500" : "text-red-500"}`}>{connectMessage}</div>
+      {/* Local Video */}
+      <video
+        autoPlay
+        muted
+        playsInline
+        ref={(video) => {
+          if (video && localStream) {
+            video.srcObject = localStream;
+          }
+        }}
+        className="w-1/2"
+      />
+
+      {/* Remote Videos */}
+      <div className="flex space-x-4">
+        {Object.entries(remoteStreams).map(([producerId, stream]) => (
+          <video
+            key={producerId}
+            autoPlay
+            playsInline
+            ref={(video) => {
+              if (video) {
+                video.srcObject = stream;
+              }
+            }}
+            className="w-1/4"
+          />
+        ))}
+      </div>
     </div>
   );
 }

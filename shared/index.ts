@@ -12,6 +12,8 @@ export const SOCKET_EVENTS = {
   CREATE_TRANSPORT: "createTransport",
   CONSUME: "consume",
   PRODUCE: "produce",
+  NEW_PRODUCER: "newProducer",
+  GET_ROUTER_CAPABILITIES: "getRouterRtpCapabilities",
 };
 
 export type ServerMessageData = { message: string };
