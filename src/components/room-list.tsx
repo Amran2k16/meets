@@ -1,3 +1,6 @@
+"use client";
+
+import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 
@@ -23,6 +26,12 @@ const rooms = [
 ];
 
 export default function RoomList() {
+  const router = useRouter();
+
+  const handleRoomClick = (roomId: number) => {
+    router.push(`/room/${roomId}`);
+  };
+
   return (
     <div className="w-full max-w-sm space-y-4 mx-auto p-4">
       {rooms.map((room) => (
@@ -31,6 +40,7 @@ export default function RoomList() {
             variant="outline"
             size="xl"
             className="w-full justify-between"
+            onClick={() => handleRoomClick(room.id)}
           >
             {room.name}
             <div className="flex -space-x-2">
