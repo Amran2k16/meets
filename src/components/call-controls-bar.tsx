@@ -7,6 +7,7 @@ import {
   ScreenShare,
   PhoneOff,
   MessageSquare,
+  Captions,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
@@ -26,6 +27,7 @@ export function CallControlsBar() {
   const [videoEnabled, setVideoEnabled] = useState<boolean>(false);
   const [screenShareEnabled, setScreenShareEnabled] = useState<boolean>(false);
   const [chatEnabled, setChatEnabled] = useState<boolean>(false);
+  const [enableCC, setEnableCC] = useState<boolean>(false);
   const { toggleSidebar } = useSidebar();
 
   const toggleMic = () => {
@@ -38,6 +40,10 @@ export function CallControlsBar() {
 
   const toggleScreenShare = () => {
     setScreenShareEnabled((prev) => !prev);
+  };
+
+  const toggleCC = () => {
+    setEnableCC((prev) => !prev);
   };
 
   const toggleChat = () => {
@@ -91,6 +97,14 @@ export function CallControlsBar() {
           <ScreenShare
             className={screenShareEnabled ? "" : "text-muted-foreground"}
           />
+        </Button>
+        <Button
+          variant={enableCC ? "default" : "ghost"}
+          size="icon"
+          onClick={toggleCC}
+        >
+          <span className="sr-only">CC</span>
+          <Captions className={enableCC ? "" : "text-muted-foreground"} />
         </Button>
         <Button
           variant="ghost"
