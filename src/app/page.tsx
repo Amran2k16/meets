@@ -1,9 +1,9 @@
-import { Button } from "@/components/ui/button";
+import RoomList from "@/components/room-list";
 
 export default function Home() {
   return (
-    <div>
-      <Button>Hello</Button>
+    <div className="h-screen flex items-center justify-center">
+      <RoomList />
     </div>
   );
 }
