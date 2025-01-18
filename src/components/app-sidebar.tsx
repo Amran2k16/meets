@@ -1,20 +1,21 @@
 "use client";
 
-import { useState } from "react";
 import { Link } from "lucide-react";
 
 import {
   Sidebar,
+  SidebarClose,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import SendMessage from "./send-message";
+import { Button } from "./ui/button";
+import { useClipboard } from "@/hooks/use-clipboard";
 
 // This is sample data.
 const messages = [
@@ -45,27 +46,24 @@ const messages = [
 ];
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const [copied, setCopied] = useState(false);
-
-  const handleShareLink = () => {
-    const link = window.location.href;
-    navigator.clipboard.writeText(link).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
+  const { copied, handleCopy } = useClipboard();
 
   return (
     <Sidebar variant="floating" {...props}>
       <SidebarHeader>
         <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" onClick={handleShareLink}>
+          <SidebarMenuItem className="flex items-center justify-between">
+            <Button
+              onClick={() => handleCopy(window.location.href)}
+              variant="secondary"
+            >
               {copied ? "Link copied!" : "Share link"} <Link />
-            </SidebarMenuButton>
+            </Button>
+            <SidebarClose className="min-w-9" />
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
+
       <SidebarContent>
         <div className="flex flex-col gap-4 p-4">
           {messages.map((msg) => (

@@ -23,7 +23,6 @@ export default function Page() {
         } as React.CSSProperties
       }
     >
-      <AppSidebar />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 px-4">
           <SidebarTrigger className="-ml-1" />
@@ -49,6 +48,7 @@ export default function Page() {
           <div className="min-h-[100vh] flex-1 rounded-xl bg-muted/50 md:min-h-min" />
         </div>
       </SidebarInset>
+      <AppSidebar />
     </SidebarProvider>
   );
 }
