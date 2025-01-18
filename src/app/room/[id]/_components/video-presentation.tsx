@@ -25,7 +25,7 @@ export default function VideoPresentation({
     <div className={cn("flex-1 flex flex-col gap-4 pb-4")}>
       {isPresentationMode ? (
         <div className="flex flex-col gap-4">
-          <div className="w-full h-[70vh] bg-muted/50 rounded-xl flex items-center justify-center">
+          <div className="w-full h-[50vh] bg-muted/50 rounded-xl flex items-center justify-center">
             <span className="text-center text-muted-foreground text-2xl">
               {
                 userVideos.find((video) => video.id === presentingVideoId)
