@@ -15,7 +15,8 @@
     "postinstall": "^0.7.5",
     "socket.io": "^4.8.1",
     "ts-node": "^10.9.2",
-    "tsx": "^4.19.2"
+    "tsx": "^4.19.2",
+    "shared": "file:../../shared"
   },
   "trustedDependencies": [
     "esbuild",

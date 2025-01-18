@@ -1,65 +1,235 @@
-import { serve } from "bun";
 import express from "express";
-import { Server as SocketIOServer } from "socket.io";
 import http from "http";
-import * as mediasoup from "mediasoup";
-import type { Router, Worker, WebRtcTransport, Producer, RtpCapabilities } from "mediasoup/node/lib/types";
+import cors, { type CorsOptions } from "cors";
+import socket, { Server } from "socket.io";
+import winston from "winston";
+import { SOCKET_EVENTS, type ServerMessageData } from "shared";
+import mediasoup, {
+  types,
+  version,
+  observer,
+  createWorker,
+  getSupportedRtpCapabilities,
+  parseScalabilityMode,
+} from "mediasoup";
+import { Room } from "./room";
 
-// -------------------------------------------
-// Logger utility
-// -------------------------------------------
-const logger = (level: string, message: string) => {
-  const levels = ["error", "warn", "info", "debug"];
-  const currentLevel = "debug"; // or "info" if you want less verbosity
-  if (levels.indexOf(level) <= levels.indexOf(currentLevel)) {
-    console.log(`[${level.toUpperCase()}] ${message}`);
-  }
-};
+const isDevelopment = process.env.NODE_ENV === "development";
+const PORT = process.env.PORT ?? 3001;
+var logLevel = process.env.LOG_LEVEL || (isDevelopment ? "debug" : "info");
+const logger = winston.createLogger({
+  level: logLevel,
+  format: winston.format.combine(
+    winston.format.colorize(),
+    winston.format.timestamp(),
+    winston.format.printf(({ timestamp, level, message }) => {
+      return `${timestamp} [${level}]: ${message}`;
+    })
+  ),
+  transports: [new winston.transports.Console()],
+});
 
-// -------------------------------------------
-// Express & Socket.io
-// -------------------------------------------
+if (isDevelopment) {
+  logger.debug("Running in development mode");
+}
+
 const app = express();
-const httpServer = http.createServer(app);
-const io = new SocketIOServer(httpServer, {
+const server = http.createServer(app);
+const io = new Server(server, {
+  path: "/socket.io",
   cors: {
-    origin: "http://localhost:3000", // Next.js origin
+    origin: isDevelopment ? "*" : process.env.PRODUCTION_DOMAIN,
     methods: ["GET", "POST"],
+    allowedHeaders: ["my-custom-header"],
     credentials: true,
   },
 });
 
-// -------------------------------------------
-// Mediasoup
-// -------------------------------------------
-let worker: Worker;
-const roomRouters = new Map<string, Router>();
-// Store { [roomName]: { [socketId]: { sendTransport, recvTransport, producers: Producer[] } } }
-const roomState = new Map<
-  string,
-  Record<
-    string,
-    {
-      sendTransport?: WebRtcTransport;
-      recvTransport?: WebRtcTransport;
-      producers: Producer[];
-    }
-  >
->();
+const corsOptions: CorsOptions = {
+  origin: isDevelopment
+    ? "*"
+    : (origin, callback) => {
+        if (!origin || origin.includes("localhost")) {
+          callback(null, true);
+        } else {
+          callback(new Error("Not allowed by CORS"));
+        }
+      },
+  optionsSuccessStatus: 200,
+};
 
-async function createMediasoupWorker() {
-  worker = await mediasoup.createWorker({
-    logLevel: "debug",
-    rtcMinPort: 40000,
-    rtcMaxPort: 49999,
+const worker = await createMediasoupWorker();
+const rooms = new Map<string, Room>();
+
+worker.on("died", () => {
+  logger.warn("Media Soup Worker Died");
+});
+
+app.use(cors(corsOptions));
+
+// Example usage of logger
+logger.debug("Debugging information");
+logger.info("Server is starting");
+logger.warn("This is a warning");
+logger.error("This is an error message");
+
+app.get("/", (req, res) => {
+  res.send("Hello World");
+});
+
+io.on("connection", async (socket) => {
+  logger.info(`A user connected.`);
+  logClientsCount();
+
+  // Join a room
+  socket.on(SOCKET_EVENTS.JOIN_ROOM, async ({ roomId }) => {
+    try {
+      const room = await getOrCreateRoom(roomId);
+      console.log(`Socket ${socket.id} joined room: ${roomId}`);
+      socket.join(roomId);
+    } catch (error: any) {
+      console.error("Error joining room:", error.message);
+      socket.emit("error", { message: error.message });
+    }
   });
-  logger("info", "Mediasoup worker created");
+
+  // Create transport
+  socket.on(SOCKET_EVENTS.CREATE_TRANSPORT, async ({ roomId, direction }, callback) => {
+    try {
+      const transportParams = await createTransport(roomId, direction, socket.id);
+      callback(transportParams);
+    } catch (error: any) {
+      console.error("Error creating transport:", error.message);
+      callback({ error: error.message });
+    }
+  });
+
+  socket.on(SOCKET_EVENTS.PRODUCE, async ({ roomId, kind, rtpParameters }, callback) => {
+    try {
+      const room = rooms.get(roomId);
+      // INSERT_YOUR_CODE
+      if (!room) {
+        throw new Error(`Room ${roomId} not found`);
+      }
+      const transport = room.transports.get(socket.id);
+
+      if (!transport) throw new Error("Transport not found");
+
+      // Create a Producer for the client's media
+      const producer = await transport.produce({ kind, rtpParameters });
+
+      // Store the producer in the room
+      room.producers.set(socket.id, producer);
+
+      console.log(`Producer created: kind=${kind}, producerId=${producer.id}`);
+      callback({ id: producer.id });
+
+      // Notify other clients about the new Producer
+      socket.broadcast.to(roomId).emit("newProducer", { producerId: producer.id });
+    } catch (error: any) {
+      console.error("Error creating producer:", error);
+      callback({ error: error.message });
+    }
+  });
+
+  socket.on(SOCKET_EVENTS.CONSUME, async ({ roomId, producerId }, callback) => {
+    try {
+      const room = rooms.get(roomId);
+      if (!room) {
+        throw new Error(`Room ${roomId} not found`);
+      }
+
+      const router = room.router;
+      const transport = room.transports.get(socket.id);
+
+      if (!transport) throw new Error("Transport not found");
+
+      // Find the Producer the client wants to consume
+      const producer = Array.from(room.producers.values()).find((p) => p.id === producerId);
+      if (!producer) throw new Error("Producer not found");
+
+      // Create a Consumer for the client's transport
+      const consumer = await transport.consume({
+        producerId: producer.id,
+        rtpCapabilities: router.rtpCapabilities, // Client's RTP capabilities
+      });
+
+      // Store the consumer in the room
+      if (!room.consumers.has(socket.id)) {
+        room.consumers.set(socket.id, []);
+      }
+
+      const consumers = room.consumers.get(socket.id);
+      if (!consumers) {
+        throw new Error("Consumers array is undefined for this socket ID");
+      }
+
+      consumers.push(consumer);
+
+      console.log(`Consumer created: consumerId=${consumer.id}`);
+      callback({
+        id: consumer.id,
+        producerId: producer.id,
+        kind: consumer.kind,
+        rtpParameters: consumer.rtpParameters,
+      });
+
+      // Handle consumer events (e.g., closed)
+      consumer.on("transportclose", () => {
+        console.log(`Consumer transport closed: consumerId=${consumer.id}`);
+      });
+    } catch (error: any) {
+      console.error("Error creating consumer:", error);
+      callback({ error: error.message });
+    }
+  });
+
+  socket.on(SOCKET_EVENTS.DISCONNECT, async (reason) => {
+    logger.info(`A user disconnected. Socket ID: ${socket.id}. Reason: ${reason}`);
+    logClientsCount();
+    for (const [roomId, room] of rooms.entries()) {
+      if (room.transports.has(socket.id)) {
+        room.transports.delete(socket.id);
+        room.producers.delete(socket.id);
+        room.consumers.delete(socket.id);
+      }
+    }
+  });
+});
+
+const logClientsCount = async () => {
+  logger.info(`Current number of connected clients: ${io.engine.clientsCount}`);
+  // all sockets in the main namespace
+  const ids = await io.fetchSockets();
+  ids.forEach((socket) => logger.info(`Socket ID: ${socket.id}`));
+};
+
+// Initialize the mediasoup worker
+async function createMediasoupWorker() {
+  const mediasoupWorker = await mediasoup.createWorker({
+    rtcMinPort: 10000, // Port range for WebRTC connections
+    rtcMaxPort: 10100, // Adjust as needed
+    logLevel: logLevel,
+    logTags: ["info", "ice", "dtls", "rtp", "srtp", "rtcp"],
+  });
+
+  console.log("Mediasoup Worker created");
+
+  // Handle worker errors
+  mediasoupWorker.on("died", () => {
+    console.error("Mediasoup Worker died, restarting...");
+    process.exit(1); // Exit process if worker crashes
+  });
+
+  return mediasoupWorker;
 }
 
-async function getOrCreateRouter(roomName: string) {
-  if (roomRouters.has(roomName)) {
-    return roomRouters.get(roomName)!;
+export async function getOrCreateRoom(roomId: string) {
+  if (rooms.has(roomId)) {
+    return rooms.get(roomId);
   }
+
+  // Create a new Router for the room
   const router = await worker.createRouter({
     mediaCodecs: [
       {
@@ -72,275 +242,47 @@ async function getOrCreateRouter(roomName: string) {
         kind: "video",
         mimeType: "video/VP8",
         clockRate: 90000,
-        parameters: { "x-google-start-bitrate": 1000 },
+        parameters: {
+          "x-google-start-bitrate": 1000,
+        },
       },
     ],
   });
-  roomRouters.set(roomName, router);
-  roomState.set(roomName, {});
-  logger("info", `Router created for room: ${roomName}`);
-  return router;
+
+  const room = new Room(router);
+  rooms.set(roomId, room);
+
+  console.log(`Created router for room: ${roomId}`);
+  return room;
 }
 
-// -------------------------------------------
-// Socket.io logic
-// -------------------------------------------
-io.on("connection", (socket) => {
-  logger("info", `New client => ${socket.id}`);
+async function createTransport(roomId: string, direction: string, socketId: string) {
+  const room = rooms.get(roomId);
+  if (!room) throw new Error(`Room ${roomId} not found`);
 
-  socket.on("joinRoom", async ({ roomName }, callback) => {
-    logger("info", `Socket ${socket.id} joined room: ${roomName}`);
-    const router = await getOrCreateRouter(roomName);
-
-    // Ensure roomState structure
-    if (!roomState.has(roomName)) {
-      roomState.set(roomName, {});
-    }
-    const roomObj = roomState.get(roomName)!;
-    roomObj[socket.id] = { producers: [] }; // initialize
-
-    // Create sendTransport
-    const sendTransport = await router.createWebRtcTransport({
-      listenIps: [{ ip: "0.0.0.0", announcedIp: undefined }],
-      enableUdp: true,
-      enableTcp: true,
-      preferUdp: true,
-    });
-    logger("info", `SendTransport created => ${sendTransport.id}`);
-    roomObj[socket.id].sendTransport = sendTransport;
-
-    // Create recvTransport
-    const recvTransport = await router.createWebRtcTransport({
-      listenIps: [{ ip: "0.0.0.0", announcedIp: undefined }],
-      enableUdp: true,
-      enableTcp: true,
-      preferUdp: true,
-    });
-    logger("info", `RecvTransport created => ${recvTransport.id}`);
-    roomObj[socket.id].recvTransport = recvTransport;
-
-    // Return necessary data to client
-    callback({
-      routerRtpCapabilities: router.rtpCapabilities,
-      sendTransportParams: {
-        id: sendTransport.id,
-        iceParameters: sendTransport.iceParameters,
-        iceCandidates: sendTransport.iceCandidates,
-        dtlsParameters: sendTransport.dtlsParameters,
-      },
-      recvTransportParams: {
-        id: recvTransport.id,
-        iceParameters: recvTransport.iceParameters,
-        iceCandidates: recvTransport.iceCandidates,
-        dtlsParameters: recvTransport.dtlsParameters,
-      },
-    });
-
-    // Join the socket.io room
-    socket.join(roomName);
+  // Create a WebRTC transport
+  const transport = await room.router.createWebRtcTransport({
+    listenIps: [{ ip: "127.0.0.1", announcedIp: null }], // Replace with your server's public IP
+    enableUdp: true,
+    enableTcp: true,
+    preferUdp: true,
   });
 
-  // connectTransport => used for DTLS finalization
-  socket.on("connectTransport", async ({ transportType, dtlsParameters }, cb) => {
-    logger("info", `connectTransport => Socket: ${socket.id}, Type: ${transportType}`);
-    // Find the correct transport
-    const { roomName } = socket.handshake.query;
-    if (!roomName) {
-      logger("error", "No roomName in handshake query");
-      cb({ connected: false, error: "No room name" });
-      return;
-    }
-    const roomObj = roomState.get(roomName as string);
-    if (!roomObj || !roomObj[socket.id]) {
-      logger("error", `No state for this socket in room: ${roomName}`);
-      cb({ connected: false, error: "No transport" });
-      return;
-    }
+  // Log transport details
+  console.log(`${direction} transport created for room: ${roomId}, transportId: ${transport.id}`);
 
-    let transport: WebRtcTransport | undefined = undefined;
-    if (transportType === "send") {
-      transport = roomObj[socket.id].sendTransport;
-    } else {
-      transport = roomObj[socket.id].recvTransport;
-    }
-    if (!transport) {
-      cb({ connected: false, error: "Transport not found" });
-      return;
-    }
+  // Store transport in the room
+  room.transports.set(socketId, transport);
 
-    try {
-      await transport.connect({ dtlsParameters });
-      cb({ connected: true });
-    } catch (err) {
-      logger("error", `Transport connect error => ${err}`);
-      cb({ connected: false, error: err });
-    }
-  });
+  // Return transport parameters to the client
+  return {
+    id: transport.id,
+    iceParameters: transport.iceParameters,
+    iceCandidates: transport.iceCandidates,
+    dtlsParameters: transport.dtlsParameters,
+  };
+}
 
-  // produce => client wants to create a producer
-  socket.on("produce", async ({ transportType, kind, rtpParameters }, cb) => {
-    logger("info", `Socket ${socket.id} produce => kind: ${kind}`);
-    const { roomName } = socket.handshake.query;
-    if (!roomName) {
-      logger("error", "No roomName in handshake query for produce");
-      cb({ error: "No room name" });
-      return;
-    }
-    const roomObj = roomState.get(roomName as string);
-    if (!roomObj || !roomObj[socket.id]) {
-      logger("error", `No state for this socket in room produce => ${socket.id}`);
-      cb({ error: "No transport" });
-      return;
-    }
-
-    let transport = roomObj[socket.id].sendTransport;
-    if (transportType !== "send" || !transport) {
-      cb({ error: "Send transport not found" });
-      return;
-    }
-
-    try {
-      const producer = await transport.produce({ kind, rtpParameters });
-      roomObj[socket.id].producers.push(producer);
-
-      logger("info", `Producer created => ${producer.id}`);
-      cb({ id: producer.id });
-
-      // Notify other participants in the room
-      // so they can consume this new producer
-      socket.to(roomName as string).emit("newProducer", {
-        socketId: socket.id,
-        producerId: producer.id,
-      });
-    } catch (err) {
-      logger("error", `Produce error => ${err}`);
-      cb({ error: err });
-    }
-  });
-
-  // getProducers => returns list of producers in the room
-  socket.on("getProducers", ({ roomName }, cb) => {
-    const roomObj = roomState.get(roomName);
-    if (!roomObj) {
-      cb([]);
-      return;
-    }
-    let allProducers: { socketId: string; producerId: string }[] = [];
-    for (const [socketId, data] of Object.entries(roomObj)) {
-      for (const producer of data.producers) {
-        allProducers.push({
-          socketId,
-          producerId: producer.id,
-        });
-      }
-    }
-    cb(allProducers);
-  });
-
-  // consume => client wants to create a consumer for a specific producer
-  socket.on("consume", async ({ transportType, producerId, rtpCapabilities }, cb) => {
-    logger("info", `consume => Socket: ${socket.id} wants to consume producer: ${producerId}`);
-    const { roomName } = socket.handshake.query;
-    if (!roomName) {
-      cb({ error: "No room name" });
-      return;
-    }
-    const router = roomRouters.get(roomName as string);
-    if (!router) {
-      cb({ error: "No router for this room" });
-      return;
-    }
-    const roomObj = roomState.get(roomName as string);
-    if (!roomObj || !roomObj[socket.id]) {
-      cb({ error: "No room state for this socket" });
-      return;
-    }
-    let transport: WebRtcTransport | undefined =
-      transportType === "recv" ? roomObj[socket.id].recvTransport : undefined;
-    if (!transport) {
-      cb({ error: "No recv transport" });
-      return;
-    }
-
-    // Find the producer
-    let foundProducer: Producer | undefined;
-    for (const [sId, data] of Object.entries(roomObj)) {
-      const p = data.producers.find((prod) => prod.id === producerId);
-      if (p) {
-        foundProducer = p;
-        break;
-      }
-    }
-    if (!foundProducer) {
-      cb({ error: "Producer not found" });
-      return;
-    }
-
-    // Check if we can consume
-    if (!router.canConsume({ producerId, rtpCapabilities })) {
-      logger("warn", `Cannot consume => producerId: ${producerId}`);
-      cb({ error: "Cannot consume" });
-      return;
-    }
-
-    try {
-      const consumer = await transport.consume({
-        producerId,
-        rtpCapabilities,
-        paused: false,
-      });
-      logger("info", `Consumer created => ID: ${consumer.id}, kind: ${consumer.kind}`);
-
-      consumer.on("transportclose", () => {
-        logger("info", `Consumer transport closed => consumer.id: ${consumer.id}`);
-      });
-
-      cb({
-        id: consumer.id,
-        kind: consumer.kind,
-        rtpParameters: consumer.rtpParameters,
-      });
-    } catch (err) {
-      logger("error", `Consume error => ${err}`);
-      cb({ error: err });
-    }
-  });
-
-  // Cleanup if user disconnects
-  socket.on("disconnect", () => {
-    const { roomName } = socket.handshake.query;
-    if (roomName) {
-      const roomObj = roomState.get(roomName as string);
-      if (roomObj && roomObj[socket.id]) {
-        // Close any producers
-        for (const producer of roomObj[socket.id].producers) {
-          producer.close();
-        }
-        // Close transports
-        roomObj[socket.id].sendTransport?.close();
-        roomObj[socket.id].recvTransport?.close();
-        delete roomObj[socket.id];
-      }
-      // Let others know participant left
-      socket.to(roomName as string).emit("participantLeft", socket.id);
-    }
-    logger("info", `Socket disconnected => ${socket.id}`);
-  });
+server.listen(PORT, () => {
+  logger.info(`HTTP server is running on port ${PORT}`);
 });
-
-// -------------------------------------------
-// Express routes
-// -------------------------------------------
-app.get("/", (req, res) => {
-  res.send("Hello from Bun + Express + mediasoup!");
-});
-
-// -------------------------------------------
-// Start the Server with Bun
-// -------------------------------------------
-(async () => {
-  await createMediasoupWorker();
-  httpServer.listen(3001, () => {
-    logger("info", "Server listening on http://localhost:3001");
-  });
-})();
