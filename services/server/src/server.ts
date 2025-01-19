@@ -100,27 +100,35 @@ io.on("connection", (socket) => {
   /*********************************************************
    * 1) JOIN_ROOM
    *********************************************************/
-  socket.on(SOCKET_EVENTS.JOIN_ROOM, async ({ roomId }, response: SocketResponse<string[]>) => {
-    const room = await getOrCreateRoom(roomId);
+  socket.on(
+    SOCKET_EVENTS.JOIN_ROOM,
+    async ({ roomId }, response: SocketResponse<{ producerList: string[]; socketList: string[] }>) => {
+      const room = await getOrCreateRoom(roomId);
 
-    // Join this socket into the room
-    socket.join(roomId);
-    logger.info(`Socket ${socket.id} joined room: ${roomId}`);
+      // Join this socket into the room
+      socket.join(roomId);
+      logger.info(`Socket ${socket.id} joined room: ${roomId}`);
 
-    // Collect the IDs of any existing producers
-    const existingProducerIds = Array.from(room.producers.entries())
-      .filter(([producerSocketId]) => producerSocketId !== socket.id)
-      .flatMap(([, producersMap]) => Array.from(producersMap.keys()));
+      // Collect the IDs of any existing producers
+      const existingProducerIds = room.getAllProducers().map((producer) => producer.id);
+      logger.info(`Existing producers in room ${roomId}: ${existingProducerIds.join(", ")}`);
 
-    logger.info(`Existing producers in room ${roomId}: ${existingProducerIds.join(", ")}`);
+      // Collect the IDs of all sockets in the room
+      const socketsInRoom = await io.in(roomId).fetchSockets();
+      const socketIds = socketsInRoom.map((s) => s.id);
+      logger.info(`Sockets in room ${roomId}: ${socketIds.join(", ")}`);
 
-    // Send back success + the existing producer IDs
-    response({
-      success: true,
-      message: `Joined room: ${roomId}`,
-      data: existingProducerIds,
-    });
-  });
+      // Send back success + the existing producer IDs and socket IDs
+      response({
+        success: true,
+        message: `Joined room: ${roomId}`,
+        data: {
+          producerList: existingProducerIds,
+          socketList: socketIds,
+        },
+      });
+    }
+  );
 
   /*********************************************************
    * 2) GET_ROUTER_CAPABILITIES
@@ -177,9 +185,7 @@ io.on("connection", (socket) => {
       logger.error("Transport creation failed: transport is null");
       return response({ success: false, message: "Transport creation failed: transport is null" });
     }
-    const socketTransports = room.transports.get(socket.id) || new Map();
-    socketTransports.set(transport.id, transport);
-    room.transports.set(socket.id, socketTransports);
+    room.addTransport(socket.id, transport.id, transport);
 
     logger.info(
       `Transport created for roomId: ${roomId}, direction: ${direction}, transportId=${transport.id}, socketId: ${socket.id}`
@@ -212,7 +218,7 @@ io.on("connection", (socket) => {
       }
 
       // Iterate the room's transports to find the entry with the socket id
-      const transport = foundRoom.transports.get(socket.id)?.get(transportId);
+      const transport = foundRoom.getAllTransports(socket.id).find((t) => t.id === transportId);
 
       if (!transport) {
         logger.error(`Transport with ID ${transportId} not found`);
@@ -238,13 +244,14 @@ io.on("connection", (socket) => {
    * 5) PRODUCE
    *********************************************************/
   socket.on(SOCKET_EVENTS.PRODUCE, async ({ roomId, transportId, kind, rtpParameters }, response) => {
+    logger.error(`Produce event received with inputs: roomId=${roomId}, transportId=${transportId}, kind=${kind}`);
     const room = rooms.get(roomId);
 
     if (!room) {
       return response({ success: false, message: `Room ${roomId} not found` });
     }
 
-    const transport = room.transports.get(socket.id)?.get(transportId);
+    const transport = room.getAllTransports(socket.id).find((t) => t.id === transportId);
 
     if (!transport) {
       return response({ success: false, message: `Transport with ID ${transportId} not found` });
@@ -257,10 +264,7 @@ io.on("connection", (socket) => {
       return response({ success: false, message: produceError.message });
     }
 
-    if (!room.producers.has(socket.id)) {
-      room.producers.set(socket.id, new Map());
-    }
-    room.producers.get(socket.id)?.set(producer.id, producer);
+    room.addProducer(socket.id, producer.id, producer);
 
     logger.info(`Producer created: kind=${kind}, producerId=${producer.id} (transportId=${transportId})`);
 
@@ -273,18 +277,12 @@ io.on("connection", (socket) => {
     // Clean up on transport close
     producer.on("transportclose", () => {
       logger.info(`Producer's transport closed. ProducerId=${producer.id}`);
-      room.producers.get(socket.id)?.delete(producer.id);
-      if (room.producers.get(socket.id)?.size === 0) {
-        room.producers.delete(socket.id);
-      }
+      room.removeProducer(socket.id, producer.id);
     });
     // Clean up on producer close
     producer.on("close", () => {
       logger.info(`Producer closed. ProducerId=${producer.id}`);
-      room.producers.get(socket.id)?.delete(producer.id);
-      if (room.producers.get(socket.id)?.size === 0) {
-        room.producers.delete(socket.id);
-      }
+      room.removeProducer(socket.id, producer.id);
     });
   });
 
@@ -307,9 +305,7 @@ io.on("connection", (socket) => {
 
       const router = room.router;
 
-      const transport = Array.from(room.transports.values())
-        .flatMap((transportsMap) => Array.from(transportsMap.values()))
-        .find((t) => t.id === transportId);
+      const transport = room.getAllTransports().find((t) => t.id === transportId);
 
       if (!transport) {
         logger.error(`Transport with ID ${transportId} not found`);
@@ -317,15 +313,10 @@ io.on("connection", (socket) => {
       }
       logger.debug(`Transport with ID ${transportId} found`);
 
-      const producerKeys = Array.from(room.producers.values()).flatMap((producersMap) =>
-        Array.from(producersMap.keys())
-      );
+      const producerKeys = [...room.getAllProducers()].map((producer) => producer.id);
       logger.info(`Producer keys in room ${roomId}: ${producerKeys.join(", ")}`);
 
-      const producer =
-        Array.from(room.producers.values())
-          .flatMap((producersMap) => Array.from(producersMap.values()))
-          .find((entry) => entry.id === producerId) || null;
+      const producer = room.getAllProducers().find((entry) => entry.id === producerId) || null;
 
       if (!producer) {
         logger.error(`Producer with ID ${producerId} not found`);
@@ -342,11 +333,8 @@ io.on("connection", (socket) => {
 
       logger.debug(`Consumer created: consumerId=${consumer.id}, producerId=${producerId}`);
 
-      // Add consumer to the map
-      if (!room.consumers.has(socket.id)) {
-        room.consumers.set(socket.id, new Map());
-      }
-      room.consumers.get(socket.id)?.set(consumer.id, consumer);
+      room.addConsumer(socket.id, consumer.id, consumer);
+
       logger.debug(`Consumer added to room: consumerId=${consumer.id}, socketId=${socket.id}`);
       const data: ConsumerData = {
         id: consumer.id,
@@ -383,12 +371,7 @@ io.on("connection", (socket) => {
     for (const [roomId, room] of rooms.entries()) {
       rooms.forEach((room, roomId) => {
         logger.info(`Room ID: ${roomId}, Room: ${JSON.stringify(room)}`);
-
-        // Log the producers map in general
-        logger.info(`Producers in room ${roomId}: ${JSON.stringify(Array.from(room.producers.entries()))}`);
-        room.consumers.delete(socket.id);
-        room.transports.delete(socket.id);
-        room.producers.delete(socket.id);
+        room.deleteAllEntriesForSocket(socket.id);
       });
     }
   });
@@ -427,36 +410,6 @@ async function getOrCreateRoom(roomId: string) {
 
   logger.info(`Created new router for room: ${roomId} (total: ${rooms.size})`);
   return room;
-}
-
-async function createTransport(roomId: string, direction: "send" | "recv") {
-  const room = rooms.get(roomId);
-  if (!room) throw new Error(`Room ${roomId} not found`);
-
-  const [transportError, transport] = await handleAsync<mediaSoupTypes.WebRTC>(
-    room.router.createWebRtcTransport({
-      listenIps: [{ ip: "127.0.0.1", announcedIp: null }], // Replace with your public IP
-      enableUdp: true,
-      enableTcp: true,
-      preferUdp: true,
-    })
-  );
-
-  if (transportError) {
-    throw new Error(`Failed to create WebRTC transport: ${transportError.message}`);
-  }
-
-  // Store the transport by its own ID
-  room.transports.set(transport.id, transport);
-
-  logger.info(`${direction.toUpperCase()} Transport created for room ${roomId}, transportId=${transport.id}`);
-
-  return {
-    id: transport.id,
-    iceParameters: transport.iceParameters,
-    iceCandidates: transport.iceCandidates,
-    dtlsParameters: transport.dtlsParameters,
-  };
 }
 
 async function logClientsCount() {

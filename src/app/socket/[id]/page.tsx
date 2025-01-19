@@ -6,15 +6,7 @@ import { usePathname } from "next/navigation";
 import io, { Socket } from "socket.io-client";
 import mediasoupClient, { type types as mediaSoupTypes } from "mediasoup-client";
 
-import {
-  ConsumerData,
-  ConsumeResponse,
-  JoinRoomResponse,
-  SOCKET_EVENTS,
-  TRANSPORT_EVENTS,
-  TransportData,
-  type ServerMessageData,
-} from "shared"; // adjust path as needed
+import { ConsumerData, SOCKET_EVENTS, TRANSPORT_EVENTS, TransportData, type ServerMessageData } from "shared"; // adjust path as needed
 import { emitAsync, safeEmitAsync } from "@/lib/utils";
 
 export default function SocketPage() {
@@ -95,7 +87,7 @@ export default function SocketPage() {
 
           if (!socketRef.current) return;
 
-          const [joinRoomError, producersList] = await safeEmitAsync<string[]>(
+          const [joinRoomError, joinRoomData] = await safeEmitAsync<{ producerList: string[]; socketList: string[] }>(
             socketRef.current,
             SOCKET_EVENTS.JOIN_ROOM,
             {
@@ -243,9 +235,9 @@ export default function SocketPage() {
             console.log(`Recv transport state changed: ${state}`);
           });
 
-          console.log("Join Room Response -> List of producers:", JSON.stringify(producersList));
+          console.log("Join Room Response -> List of producers:", JSON.stringify(joinRoomData));
 
-          for (const producerId of producersList!) {
+          for (const producerId of joinRoomData?.producerList!) {
             if (producerId === sendTransportRef.current.id) {
               console.log(`Skipping own producer with ID: ${producerId}`);
               continue;
