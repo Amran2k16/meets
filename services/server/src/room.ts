@@ -8,8 +8,8 @@ export class Room {
     this.consumers = new Map<string, types.Consumer[]>(); // Key: socketId, Value: Array of Consumers
   }
 
-  private router: types.Router;
-  private transports: Map<string, types.Transport>;
-  private producers: Map<string, types.Producer>;
-  private consumers: Map<string, types.Consumer[]>;
+  public router: types.Router;
+  public transports: Map<string, types.Transport>;
+  public producers: Map<string, types.Producer>;
+  public consumers: Map<string, types.Consumer[]>;
 }

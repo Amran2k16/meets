@@ -50,11 +50,11 @@ const io = new Server(server, {
 const corsOptions: CorsOptions = {
   origin: isDevelopment
     ? "*"
-    : (origin, callback) => {
+    : (origin, response) => {
         if (!origin || origin.includes("localhost")) {
-          callback(null, true);
+          response(null, true);
         } else {
-          callback(new Error("Not allowed by CORS"));
+          response(new Error("Not allowed by CORS"));
         }
       },
   optionsSuccessStatus: 200,
@@ -97,7 +97,7 @@ io.on("connection", (socket) => {
   /*********************************************************
    * 1) JOIN_ROOM
    *********************************************************/
-  socket.on(SOCKET_EVENTS.JOIN_ROOM, async ({ roomId }, callback) => {
+  socket.on(SOCKET_EVENTS.JOIN_ROOM, async ({ roomId }, response) => {
     try {
       const room = await getOrCreateRoom(roomId);
 
@@ -110,21 +110,21 @@ io.on("connection", (socket) => {
       logger.info(`Existing producers in room ${roomId}: ${existingProducerIds.join(", ")}`);
 
       // Send back success + the existing producer IDs
-      callback({
+      response({
         success: true,
         message: `Joined room: ${roomId}`,
         existingProducerIds,
       });
     } catch (error: any) {
       logger.error("Error joining room:", error.message);
-      callback({ success: false, message: error.message });
+      response({ success: false, message: error.message });
     }
   });
 
   /*********************************************************
    * 2) GET_ROUTER_CAPABILITIES
    *********************************************************/
-  socket.on(SOCKET_EVENTS.GET_ROUTER_CAPABILITIES, (data, callback) => {
+  socket.on(SOCKET_EVENTS.GET_ROUTER_CAPABILITIES, (data, response) => {
     try {
       logger.info(`Received getRouterRtpCapabilities from socket: ${socket.id}`);
 
@@ -139,31 +139,31 @@ io.on("connection", (socket) => {
       }
 
       const rtpCapabilities = room.router.rtpCapabilities;
-      callback(rtpCapabilities);
+      response(rtpCapabilities);
     } catch (error: any) {
       logger.error("Error in getRouterRtpCapabilities:", error.message);
-      callback({ error: error.message });
+      response({ error: error.message });
     }
   });
 
   /*********************************************************
    * 3) CREATE_TRANSPORT
    *********************************************************/
-  socket.on(SOCKET_EVENTS.CREATE_TRANSPORT, async ({ roomId, direction }, callback) => {
+  socket.on(SOCKET_EVENTS.CREATE_TRANSPORT, async ({ roomId, direction }, response) => {
     try {
       const transportParams = await createTransport(roomId, direction);
       logger.info(`Transport created for roomId: ${roomId}, direction: ${direction}, socketId: ${socket.id}`);
-      callback(transportParams);
+      response(transportParams);
     } catch (error: any) {
       logger.error("Error creating transport:", error.message);
-      callback({ error: error.message });
+      response({ error: error.message });
     }
   });
 
   /*********************************************************
    * 4) CONNECT_TRANSPORT
    *********************************************************/
-  socket.on(SOCKET_EVENTS.CONNECT_TRANSPORT, async ({ transportId, dtlsParameters }, callback) => {
+  socket.on(SOCKET_EVENTS.CONNECT_TRANSPORT, async ({ transportId, dtlsParameters }, response) => {
     try {
       logger.info(`Socket ${socket.id} connecting transport: ${transportId}`);
 
@@ -183,17 +183,17 @@ io.on("connection", (socket) => {
 
       await transport.connect({ dtlsParameters });
       logger.info(`Transport ${transportId} connected successfully for room: ${foundRoomId}`);
-      callback({ success: true });
+      response({ success: true });
     } catch (error: any) {
       logger.error("Error connecting transport:", error.message);
-      callback({ error: error.message });
+      response({ error: error.message });
     }
   });
 
   /*********************************************************
    * 5) PRODUCE
    *********************************************************/
-  socket.on(SOCKET_EVENTS.PRODUCE, async ({ roomId, transportId, kind, rtpParameters }, callback) => {
+  socket.on(SOCKET_EVENTS.PRODUCE, async ({ roomId, transportId, kind, rtpParameters }, response) => {
     try {
       const room = rooms.get(roomId);
       if (!room) {
@@ -211,7 +211,7 @@ io.on("connection", (socket) => {
       logger.info(`Producer created: kind=${kind}, producerId=${producer.id} (transportId=${transportId})`);
 
       // Acknowledge to the client
-      callback({ id: producer.id });
+      response({ id: producer.id });
 
       // Notify other clients in the same room
       socket.broadcast.to(roomId).emit(SOCKET_EVENTS.NEW_PRODUCER, { producerId: producer.id });
@@ -228,14 +228,14 @@ io.on("connection", (socket) => {
       });
     } catch (error: any) {
       logger.error("Error creating producer:", error.message);
-      callback({ error: error.message });
+      response({ error: error.message });
     }
   });
 
   /*********************************************************
    * 6) CONSUME
    *********************************************************/
-  socket.on(SOCKET_EVENTS.CONSUME, async ({ roomId, producerId, transportId }, callback) => {
+  socket.on(SOCKET_EVENTS.CONSUME, async ({ roomId, producerId, transportId }, response) => {
     logger.info(
       `Consume event received with inputs: roomId=${roomId}, producerId=${producerId}, transportId=${transportId}`
     );
@@ -276,7 +276,7 @@ io.on("connection", (socket) => {
       room.consumers.get(socket.id)!.push(consumer);
       logger.info(`Consumer added to room: consumerId=${consumer.id}, socketId=${socket.id}`);
 
-      callback({
+      response({
         id: consumer.id,
         producerId: producer.id,
         kind: consumer.kind,
@@ -288,7 +288,7 @@ io.on("connection", (socket) => {
       });
     } catch (error: any) {
       logger.error("Error creating consumer:", error.message);
-      callback({ error: error.message });
+      response({ error: error.message });
     }
   });
 

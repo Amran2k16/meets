@@ -6,7 +6,8 @@ import { usePathname } from "next/navigation";
 import io, { Socket } from "socket.io-client";
 import mediasoupClient from "mediasoup-client";
 
-import { SOCKET_EVENTS, type ServerMessageData } from "shared"; // adjust path as needed
+import { ConsumeResponse, JoinRoomResponse, SOCKET_EVENTS, type ServerMessageData } from "shared"; // adjust path as needed
+import { emitAsync, safeEmitAsync } from "@/lib/utils";
 
 export default function SocketPage() {
   /********************************************************
@@ -74,12 +75,175 @@ export default function SocketPage() {
         const s = socketRef.current;
 
         // Fired upon successful connection
-        s.on(SOCKET_EVENTS.CONNECT, () => {
+        s.on(SOCKET_EVENTS.CONNECT, async () => {
           console.log(`Socket connected with ID: ${s.id}`);
-          handleConnect();
 
-          // Join the room after we have a socket connection
-          joinRoom(extractedId);
+          setConnected(true);
+          setConnectMessage("Connected To Server");
+          setLoading(false);
+
+          const roomId = s.id;
+          console.log(`Joining room with ID: ${roomId}`);
+
+          if (!socketRef.current) return;
+
+          const [joinRoomError, joinRoomResponse] = await safeEmitAsync<JoinRoomResponse>(
+            socketRef.current,
+            SOCKET_EVENTS.JOIN_ROOM,
+            {
+              roomId,
+            }
+          );
+
+          if (joinRoomError) {
+            console.error("Failed to join room:", joinRoomError.message);
+            return;
+          }
+
+          for (const producerId of joinRoomResponse!.existingProducerIds) {
+            const [consumeError, consumeResult] = await safeEmitAsync<ConsumeResponse>(
+              socketRef.current,
+              SOCKET_EVENTS.CONSUME,
+              {
+                roomId,
+                producerId,
+                transportId: recvTransportRef.current.id,
+              }
+            );
+
+            if (consumeError) {
+              console.error("Failed to join room:", consumeError.message);
+              return;
+            }
+
+            // Now create a consumer for that existing producer
+            const consumer = await recvTransportRef.current.consume(consumeResult);
+            const stream = new MediaStream([consumer.track]);
+            setRemoteStreams((prev) => ({ ...prev, [producerId]: stream }));
+
+            consumer.on("trackended", () => {
+              console.log(`Remote track ended for producer: ${producerId}`);
+              setRemoteStreams((prev) => {
+                const updated = { ...prev };
+                delete updated[producerId];
+                return updated;
+              });
+            });
+          }
+
+          // 2) Get Router RTP Capabilities
+          console.log("Requesting RTP capabilities from server...");
+          const [rtpError, rtpCapabilitiesResponse] = await safeEmitAsync<any>(
+            socketRef.current,
+            SOCKET_EVENTS.GET_ROUTER_CAPABILITIES,
+            { roomId }
+          );
+
+          if (rtpError) {
+            console.error("Failed to retrieve RTP capabilities:", rtpCapabilitiesResponse.error);
+            return;
+          }
+
+          const rtpCapabilities = rtpCapabilitiesResponse.result;
+          console.log("RTP Capabilities received from server:", rtpCapabilities);
+
+          // 3) Create Mediasoup Device
+          deviceRef.current = new mediasoupClient.Device();
+          await deviceRef.current.load({ routerRtpCapabilities: rtpCapabilities });
+          console.log("Mediasoup Device loaded");
+
+          /// Sending
+          const transportParams = await new Promise<any>((resolve) => {
+            socketRef.current?.emit(SOCKET_EVENTS.CREATE_TRANSPORT, { roomId, direction: "send" }, resolve);
+          });
+
+          sendTransportRef.current = deviceRef.current.createSendTransport(transportParams);
+
+          sendTransportRef.current.on(
+            "connect",
+            ({ dtlsParameters }: any, callback: () => void, errback: (error: Error) => void) => {
+              console.log("SendTransport connecting...");
+              socketRef.current?.emit(
+                SOCKET_EVENTS.CONNECT_TRANSPORT,
+                { transportId: sendTransportRef.current.id, dtlsParameters },
+                (response: any) => {
+                  if (response?.error) {
+                    errback(new Error(response.error));
+                  } else {
+                    callback();
+                  }
+                }
+              );
+            }
+          );
+
+          sendTransportRef.current.on(
+            "produce",
+            async (
+              { kind, rtpParameters }: any,
+              callback: (arg: { id: string }) => void,
+              errback: (error: Error) => void
+            ) => {
+              if (!socketRef.current) return;
+
+              socketRef.current.emit(
+                SOCKET_EVENTS.PRODUCE,
+                {
+                  roomId,
+                  transportId: sendTransportRef.current.id,
+                  kind,
+                  rtpParameters,
+                },
+                (response: any) => {
+                  if (response?.error) {
+                    errback(new Error(response.error));
+                  } else {
+                    callback({ id: response.id });
+                  }
+                }
+              );
+            }
+          );
+
+          sendTransportRef.current.on("connectionstatechange", (state: string) => {
+            console.log(`Send transport state changed: ${state}`);
+          });
+
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          setLocalStream(stream);
+
+          stream.getTracks().forEach(async (track) => {
+            await sendTransportRef.current.produce({ track });
+          });
+
+          /// RECEIVING
+          const recvTransportParams = await new Promise<any>((resolve) => {
+            socketRef.current?.emit(SOCKET_EVENTS.CREATE_TRANSPORT, { roomId, direction: "recv" }, resolve);
+          });
+
+          recvTransportRef.current = deviceRef.current.createRecvTransport(recvTransportParams);
+
+          recvTransportRef.current.on(
+            "connect",
+            ({ dtlsParameters }: any, callback: () => void, errback: (error: Error) => void) => {
+              console.log("RecvTransport connecting...");
+              socketRef.current?.emit(
+                SOCKET_EVENTS.CONNECT_TRANSPORT,
+                { transportId: recvTransportRef.current.id, dtlsParameters },
+                (response: any) => {
+                  if (response?.error) {
+                    errback(new Error(response.error));
+                  } else {
+                    callback();
+                  }
+                }
+              );
+            }
+          );
+
+          recvTransportRef.current.on("connectionstatechange", (state: string) => {
+            console.log(`Recv transport state changed: ${state}`);
+          });
         });
 
         s.on(SOCKET_EVENTS.CONNECT_ERROR, handleConnectError);
@@ -125,12 +289,7 @@ export default function SocketPage() {
     setLoading(false);
   };
 
-  const handleConnect = () => {
-    console.log("Connected to the WebSocket server");
-    setConnected(true);
-    setConnectMessage("Connected To Server");
-    setLoading(false);
-  };
+  const handleConnect = () => {};
 
   const handleDisconnect = (reason: string) => {
     console.log(`Disconnected from the WebSocket server. Reason: ${reason}`);
@@ -145,171 +304,14 @@ export default function SocketPage() {
   // ================================================
   // Join Room and Setup Mediasoup
   // ================================================
-  const joinRoom = async (roomId: string) => {
-    console.log(`Joining room with ID: ${roomId}`);
+  const joinRoom = async (roomId: string) => {};
 
-    if (!socketRef.current) return;
-
-    // 1) Request to join the room
-    const joinRoomResponse = await new Promise<{
-      success: boolean;
-      message: string;
-      existingProducerIds: string[];
-    }>((resolve, reject) => {
-      socketRef.current?.emit(SOCKET_EVENTS.JOIN_ROOM, { roomId }, (response: any) => {
-        if (response?.success) {
-          console.log(`Successfully joined room: ${roomId}`);
-          resolve(response);
-        } else {
-          console.error(`Failed to join room: ${response?.message}`);
-          reject(new Error(response?.message || "Unknown error"));
-        }
-      });
-    });
-
-    // 2) Check for existing producers
-    if (joinRoomResponse.existingProducerIds.length > 0) {
-      console.log("Found existing producers:", joinRoomResponse.existingProducerIds);
-      await consumeExistingProducers(joinRoomResponse.existingProducerIds, roomId);
-    }
-
-    // 2) Get Router RTP Capabilities
-    const rtpCapabilities = await new Promise<any>((resolve, reject) => {
-      console.log("Requesting RTP capabilities from server...");
-      socketRef.current?.emit(SOCKET_EVENTS.GET_ROUTER_CAPABILITIES, { roomId }, (response: any) => {
-        if (response?.error) {
-          console.error("Failed to retrieve RTP capabilities:", response.error);
-          reject(new Error(response.error));
-        } else {
-          console.log("RTP Capabilities received from server:", response);
-          resolve(response);
-        }
-      });
-    });
-
-    // 3) Create Mediasoup Device
-    deviceRef.current = new mediasoupClient.Device();
-    await deviceRef.current.load({ routerRtpCapabilities: rtpCapabilities });
-    console.log("Mediasoup Device loaded");
-
-    // 4) Create send and receive transports
-    await createSendTransport(roomId);
-    await createRecvTransport(roomId);
-  };
-
-  async function consumeExistingProducers(producerIds: string[], roomId: string) {
-    if (!recvTransportRef.current || !socketRef.current) return;
-
-    for (const producerId of producerIds) {
-      try {
-        const consumerParams = await new Promise<any>((resolve, reject) => {
-          socketRef.current?.emit(
-            SOCKET_EVENTS.CONSUME,
-            {
-              roomId,
-              producerId,
-              transportId: recvTransportRef.current.id,
-            },
-            (response: any) => {
-              if (response.error) {
-                reject(new Error(response.error));
-              } else {
-                resolve(response);
-              }
-            }
-          );
-        });
-
-        // Now create a consumer for that existing producer
-        const consumer = await recvTransportRef.current.consume(consumerParams);
-        const stream = new MediaStream([consumer.track]);
-        setRemoteStreams((prev) => ({ ...prev, [producerId]: stream }));
-
-        consumer.on("trackended", () => {
-          console.log(`Remote track ended for producer: ${producerId}`);
-          setRemoteStreams((prev) => {
-            const updated = { ...prev };
-            delete updated[producerId];
-            return updated;
-          });
-        });
-      } catch (error) {
-        console.error(`Error consuming existing producer ${producerId}:`, error);
-      }
-    }
-  }
+  async function consumeExistingProducers(producerIds: string[], roomId: string) {}
   // ================================================
   // Create Send Transport
   // ================================================
   const createSendTransport = async (roomId: string) => {
     if (!socketRef.current || !deviceRef.current) return;
-
-    // 1) Request transport parameters from server
-    const transportParams = await new Promise<any>((resolve) => {
-      socketRef.current?.emit(SOCKET_EVENTS.CREATE_TRANSPORT, { roomId, direction: "send" }, resolve);
-    });
-
-    // 2) Create a local send transport in the client
-    sendTransportRef.current = deviceRef.current.createSendTransport(transportParams);
-
-    // 3) Transport event handlers
-    sendTransportRef.current.on(
-      "connect",
-      ({ dtlsParameters }: any, callback: () => void, errback: (error: Error) => void) => {
-        console.log("SendTransport connecting...");
-        socketRef.current?.emit(
-          SOCKET_EVENTS.CONNECT_TRANSPORT,
-          { transportId: sendTransportRef.current.id, dtlsParameters },
-          (response: any) => {
-            if (response?.error) {
-              errback(new Error(response.error));
-            } else {
-              callback();
-            }
-          }
-        );
-      }
-    );
-
-    sendTransportRef.current.on(
-      "produce",
-      async (
-        { kind, rtpParameters }: any,
-        callback: (arg: { id: string }) => void,
-        errback: (error: Error) => void
-      ) => {
-        if (!socketRef.current) return;
-
-        socketRef.current.emit(
-          SOCKET_EVENTS.PRODUCE,
-          {
-            roomId,
-            transportId: sendTransportRef.current.id,
-            kind,
-            rtpParameters,
-          },
-          (response: any) => {
-            if (response?.error) {
-              errback(new Error(response.error));
-            } else {
-              callback({ id: response.id });
-            }
-          }
-        );
-      }
-    );
-
-    sendTransportRef.current.on("connectionstatechange", (state: string) => {
-      console.log(`Send transport state changed: ${state}`);
-    });
-
-    // 4) Capture local media and produce
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    setLocalStream(stream);
-
-    stream.getTracks().forEach(async (track) => {
-      await sendTransportRef.current.produce({ track });
-    });
   };
 
   // ================================================
@@ -317,37 +319,6 @@ export default function SocketPage() {
   // ================================================
   const createRecvTransport = async (roomId: string) => {
     if (!socketRef.current || !deviceRef.current) return;
-
-    // 1) Request transport params from server
-    const transportParams = await new Promise<any>((resolve) => {
-      socketRef.current?.emit(SOCKET_EVENTS.CREATE_TRANSPORT, { roomId, direction: "recv" }, resolve);
-    });
-
-    // 2) Create a local receive transport
-    recvTransportRef.current = deviceRef.current.createRecvTransport(transportParams);
-
-    // 3) Transport event handlers
-    recvTransportRef.current.on(
-      "connect",
-      ({ dtlsParameters }: any, callback: () => void, errback: (error: Error) => void) => {
-        console.log("RecvTransport connecting...");
-        socketRef.current?.emit(
-          SOCKET_EVENTS.CONNECT_TRANSPORT,
-          { transportId: recvTransportRef.current.id, dtlsParameters },
-          (response: any) => {
-            if (response?.error) {
-              errback(new Error(response.error));
-            } else {
-              callback();
-            }
-          }
-        );
-      }
-    );
-
-    recvTransportRef.current.on("connectionstatechange", (state: string) => {
-      console.log(`Recv transport state changed: ${state}`);
-    });
   };
 
   // ================================================

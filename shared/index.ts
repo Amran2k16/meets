@@ -28,3 +28,22 @@ export type JoinRoomEventData = { id: string; name: string; roomName: string };
 export type SendRoomMessageData = { roomName: string; message: string };
 export type RoomMessageData = { roomName: string; message: string };
 export type LeaveRoomData = { roomName: string };
+
+export type JoinRoomResponse = {
+  success: boolean;
+  message: string;
+  existingProducerIds: string[];
+};
+
+export type ConsumeResponse = {
+  success: boolean;
+  consumerParams?: {
+    id: string;
+    producerId: string;
+    kind: string;
+    rtpParameters: any;
+    type: string;
+    appData: any;
+  };
+  error?: string;
+};
