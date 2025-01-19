@@ -1,3 +1,5 @@
+import { type types as mediaSoupTypes } from "mediasoup";
+
 export const SOCKET_EVENTS = {
   CONNECT: "connect",
   CONNECT_ERROR: "connectError",
@@ -33,12 +35,6 @@ export type SendRoomMessageData = { roomName: string; message: string };
 export type RoomMessageData = { roomName: string; message: string };
 export type LeaveRoomData = { roomName: string };
 
-export type JoinRoomResponse = {
-  success: boolean;
-  message: string;
-  existingProducerIds: string[];
-};
-
 export type ConsumeResponse = {
   success: boolean;
   consumerParams?: {
@@ -52,4 +48,12 @@ export type ConsumeResponse = {
   error?: string;
 };
 
-export type SafeEmitResponse<T> = [Error | null, T | null];
+export type SocketResponse<T> = (response: { success: boolean; message?: string; data?: T | null }) => void;
+
+export type TransportData = {
+  id: string;
+  iceParameters: mediaSoupTypes.IceParameters;
+  iceCandidates: mediaSoupTypes.IceCandidate[];
+  dtlsParameters: mediaSoupTypes.DtlsParameters;
+  sctpParameters?: mediaSoupTypes.SctpParameters;
+};

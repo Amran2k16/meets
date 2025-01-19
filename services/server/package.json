@@ -13,13 +13,14 @@
     "express": "^4.21.2",
     "mediasoup": "^3.15.2",
     "postinstall": "^0.7.5",
+    "shared": "file:../../shared",
     "socket.io": "^4.8.1",
     "ts-node": "^10.9.2",
-    "tsx": "^4.19.2",
-    "shared": "file:../../shared"
+    "tsx": "^4.19.2"
   },
   "trustedDependencies": [
     "esbuild",
-    "mediasoup"
+    "mediasoup",
+    "shared"
   ]
 }
