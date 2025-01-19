@@ -5,7 +5,7 @@ import cors, { type CorsOptions } from "cors";
 import { Server } from "socket.io";
 import winston, { transport } from "winston";
 import mediasoup, { type types as mediaSoupTypes } from "mediasoup"; // { createWorker, types, etc. } as needed
-import { Room } from "./room";
+import { MediaRoom } from "./room";
 
 import { SOCKET_EVENTS, type ConsumerData, type SocketResponse, type TransportData } from "shared"; // adjust path as needed
 import type { WebRtcTransport, WebRtcTransportOptions } from "mediasoup/node/lib/WebRtcTransportTypes";
@@ -84,7 +84,8 @@ worker.on("died", () => {
 /*********************************************************
  * Rooms Map
  *********************************************************/
-const rooms = new Map<string, Room>();
+const mediaRooms = new Map<string, MediaRoom>();
+const socketToRooms = new Map<string, Set<string>>();
 
 app.get("/", (req, res) => {
   res.send("Hello World");
@@ -146,7 +147,7 @@ io.on("connection", (socket) => {
         return response({ success: false, message: "Room ID not provided" });
       }
 
-      const room = rooms.get(roomId);
+      const room = mediaRooms.get(roomId);
       if (!room) {
         logger.error(`Room with ID ${roomId} not found`);
         return response({ success: false, message: `Room with ID ${roomId} not found` });
@@ -162,7 +163,7 @@ io.on("connection", (socket) => {
    * 3) CREATE_TRANSPORT
    *********************************************************/
   socket.on(SOCKET_EVENTS.CREATE_TRANSPORT, async ({ roomId, direction }, response: SocketResponse<TransportData>) => {
-    const room = rooms.get(roomId);
+    const room = mediaRooms.get(roomId);
 
     if (!room) {
       return response({ success: false, message: `CREATE_TRANSPORT : RoomID not found` });
@@ -210,7 +211,7 @@ io.on("connection", (socket) => {
       logger.info(`Socket ${socket.id} connecting transport: ${transportId}`);
 
       // Find the room using the provided roomId
-      const foundRoom = rooms.get(roomId);
+      const foundRoom = mediaRooms.get(roomId);
 
       if (!foundRoom) {
         logger.error(`Room not found for roomId: ${roomId} 207`);
@@ -244,8 +245,8 @@ io.on("connection", (socket) => {
    * 5) PRODUCE
    *********************************************************/
   socket.on(SOCKET_EVENTS.PRODUCE, async ({ roomId, transportId, kind, rtpParameters }, response) => {
-    logger.error(`Produce event received with inputs: roomId=${roomId}, transportId=${transportId}, kind=${kind}`);
-    const room = rooms.get(roomId);
+    logger.debug(`Produce event received with inputs: roomId=${roomId}, transportId=${transportId}, kind=${kind}`);
+    const room = mediaRooms.get(roomId);
 
     if (!room) {
       return response({ success: false, message: `Room ${roomId} not found` });
@@ -296,7 +297,7 @@ io.on("connection", (socket) => {
         `Consume event received with inputs: roomId=${roomId}, producerId=${producerId}, transportId=${transportId}`
       );
 
-      const room = rooms.get(roomId);
+      const room = mediaRooms.get(roomId);
       if (!room) {
         logger.error(`Room ${roomId} not found`);
         throw new Error(`Room ${roomId} not found`);
@@ -360,30 +361,40 @@ io.on("connection", (socket) => {
   /*********************************************************
    * DISCONNECT
    *********************************************************/
-  // DISCONNECT
-  socket.on(SOCKET_EVENTS.DISCONNECT, async (reason) => {
-    logger.info(`A user disconnected. Socket ID: ${socket.id}. Reason: ${reason}`);
-    logClientsCount();
+
+  socket.on(SOCKET_EVENTS.DISCONNECTING, async (reason) => {
+    logger.info(`A user is disconnecting. Socket ID: ${socket.id}. Reason: ${reason} , room: ${socket.rooms}`);
 
     // ----------------------------------------------------------
     // Clean up any references in rooms for this socket
     // ----------------------------------------------------------
-    for (const [roomId, room] of rooms.entries()) {
-      rooms.forEach((room, roomId) => {
-        logger.info(`Room ID: ${roomId}, Room: ${JSON.stringify(room)}`);
-        room.deleteAllEntriesForSocket(socket.id);
-      });
+    for (const roomId of socket.rooms) {
+      if (roomId === socket.id) continue;
+
+      logger.info(`Cleaning up socket references for room: ${roomId}`);
+      const mediaRoom = mediaRooms.get(roomId);
+      if (mediaRoom) {
+        const message = `User with Socket ID: ${socket.id} has left the room.`;
+        const producers = mediaRoom.getAllProducers(socket.id);
+        const producerIds: string[] = producers.map((p) => p.id);
+        const socketId = socket.id;
+        socket.to(roomId).emit(SOCKET_EVENTS.USER_LEFT, { message, socketId, producerIds });
+        mediaRoom.deleteAllEntriesForSocket(socket.id);
+        logger.info(`Cleaned up socket references for room: ${roomId}`);
+      }
     }
   });
+
+  socket.on(SOCKET_EVENTS.DISCONNECT, async (reason) => {});
 });
 
 /*********************************************************
  * Utility Functions
  *********************************************************/
 async function getOrCreateRoom(roomId: string) {
-  if (rooms.has(roomId)) {
+  if (mediaRooms.has(roomId)) {
     logger.info(`Room ${roomId} already exists`);
-    return rooms.get(roomId)!;
+    return mediaRooms.get(roomId)!;
   }
 
   const router = await worker.createRouter({
@@ -405,10 +416,10 @@ async function getOrCreateRoom(roomId: string) {
     ],
   });
 
-  const room = new Room(router);
-  rooms.set(roomId, room);
+  const room = new MediaRoom(router);
+  mediaRooms.set(roomId, room);
 
-  logger.info(`Created new router for room: ${roomId} (total: ${rooms.size})`);
+  logger.info(`Created new router for room: ${roomId} (total: ${mediaRooms.size})`);
   return room;
 }
 

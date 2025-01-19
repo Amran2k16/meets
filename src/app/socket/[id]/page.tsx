@@ -277,7 +277,7 @@ export default function SocketPage() {
         s.on(SOCKET_EVENTS.CONNECT_ERROR, handleConnectError);
         s.on(SOCKET_EVENTS.DISCONNECT, handleDisconnect);
         s.on(SOCKET_EVENTS.SERVER_MESSAGE, handleServerMessage);
-
+        s.on(SOCKET_EVENTS.USER_LEFT, handleUserLeft);
         // Fired when server notifies about a new producer
         s.on(SOCKET_EVENTS.NEW_PRODUCER, handleNewProducer);
       }
@@ -327,6 +327,27 @@ export default function SocketPage() {
 
   const handleServerMessage = (data: ServerMessageData) => {
     console.log("Received server message:", data.message);
+  };
+
+  const handleUserLeft = ({
+    message,
+    socketId,
+    producerIds,
+  }: {
+    message: string;
+    socketId: string;
+    producerIds: string[];
+  }) => {
+    console.log("Handling User Left :", message);
+    setRemoteStreams((prev) => {
+      const updatedStreams = { ...prev };
+      producerIds.forEach((id) => {
+        if (updatedStreams[id]) {
+          delete updatedStreams[id];
+        }
+      });
+      return updatedStreams;
+    });
   };
 
   // ================================================
@@ -408,19 +429,23 @@ export default function SocketPage() {
 
       {/* Remote Videos */}
       <div className="flex space-x-4">
-        {Object.entries(remoteStreams).map(([producerId, stream]) => (
-          <video
-            key={producerId}
-            autoPlay
-            playsInline
-            ref={(video) => {
-              if (video) {
-                video.srcObject = stream;
-              }
-            }}
-            className="w-1/4"
-          />
-        ))}
+        {Object.entries(remoteStreams)
+          .filter(([producerId, stream]) => stream.getVideoTracks().length > 0)
+          .map(([producerId, stream]) => (
+            <div key={producerId} className="flex flex-col items-center">
+              <div className="text-sm font-semibold">{producerId}</div>
+              <video
+                autoPlay
+                playsInline
+                ref={(video) => {
+                  if (video) {
+                    video.srcObject = stream;
+                  }
+                }}
+                className="w-1/4"
+              />
+            </div>
+          ))}
       </div>
     </div>
   );

@@ -4,11 +4,13 @@ export const SOCKET_EVENTS = {
   CONNECT: "connect",
   CONNECT_ERROR: "connectError",
   DISCONNECT: "disconnect",
+  DISCONNECTING: "disconnecting",
   SERVER_MESSAGE: "serverMessage",
 
   // Room actions
   JOIN_ROOM: "joinRoom",
   LEAVE_ROOM: "leaveRoom",
+  USER_LEFT: "userLeft",
 
   // Media actions
   CREATE_TRANSPORT: "createTransport",

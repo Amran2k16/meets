@@ -1,6 +1,6 @@
 import mediasoup, { type types } from "mediasoup";
 
-export class Room {
+export class MediaRoom {
   constructor(router: types.Router) {
     this.router = router;
     this.transports = new Map<string, Map<string, types.WebRtcTransport>>();
