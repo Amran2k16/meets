@@ -23,6 +23,10 @@ export const SOCKET_EVENTS = {
   ROOM_MESSAGE: "roomMessage",
 };
 
+export const TRANSPORT_EVENTS = {
+  CONNECTION_STATE_CHANGE: "connectionstatechange",
+};
+
 export type ServerMessageData = { message: string };
 export type JoinRoomEventData = { id: string; name: string; roomName: string };
 export type SendRoomMessageData = { roomName: string; message: string };
@@ -47,3 +51,5 @@ export type ConsumeResponse = {
   };
   error?: string;
 };
+
+export type SafeEmitResponse<T> = [Error | null, T | null];

@@ -1,4 +1,5 @@
 import { clsx, type ClassValue } from "clsx";
+import { SafeEmitResponse } from "shared";
 import { Socket } from "socket.io-client";
 import { twMerge } from "tailwind-merge";
 
@@ -18,11 +19,11 @@ export function emitAsync<T>(socket: Socket, event: string, data: any): Promise<
   });
 }
 
-export async function safeEmitAsync<T>(socket: Socket, event: string, data: any): Promise<[Error | null, T | null]> {
+export async function safeEmitAsync<T>(socket: Socket, event: string, data: any): Promise<SafeEmitResponse<T>> {
   try {
     const result = await emitAsync<T>(socket, event, data);
     return [null, result]; // No error, result is valid
   } catch (error: any) {
-    return [new Error(error.message || "Unknown error"), null]; // Error occurred
+    return [new Error(error || "Unknown error"), null]; // Error occurred
   }
 }
