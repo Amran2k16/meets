@@ -108,7 +108,9 @@ io.on("connection", (socket) => {
     logger.info(`Socket ${socket.id} joined room: ${roomId}`);
 
     // Collect the IDs of any existing producers
-    const existingProducerIds = Array.from(room.producers.keys());
+    const existingProducerIds = Array.from(room.producers.values()).flatMap((producersMap) =>
+      Array.from(producersMap.keys())
+    );
     logger.info(`Existing producers in room ${roomId}: ${existingProducerIds.join(", ")}`);
 
     // Send back success + the existing producer IDs
@@ -291,7 +293,7 @@ io.on("connection", (socket) => {
   socket.on(
     SOCKET_EVENTS.CONSUME,
     async ({ roomId, producerId, transportId }, response: SocketResponse<ConsumerData>) => {
-      logger.debug(
+      logger.error(
         `Consume event received with inputs: roomId=${roomId}, producerId=${producerId}, transportId=${transportId}`
       );
 
@@ -314,11 +316,15 @@ io.on("connection", (socket) => {
       }
       logger.debug(`Transport with ID ${transportId} found`);
 
+      const producerKeys = Array.from(room.producers.values()).flatMap((producersMap) =>
+        Array.from(producersMap.keys())
+      );
+      logger.info(`Producer keys in room ${roomId}: ${producerKeys.join(", ")}`);
+
       const producer =
         Array.from(room.producers.values())
           .flatMap((producersMap) => Array.from(producersMap.values()))
           .find((entry) => entry.id === producerId) || null;
-      logger.debug(`Producer details: ${JSON.stringify(producer)}`);
 
       if (!producer) {
         logger.error(`Producer with ID ${producerId} not found`);
@@ -348,6 +354,7 @@ io.on("connection", (socket) => {
         rtpParameters: consumer.rtpParameters,
         type: consumer.type,
       };
+
       logger.info(`Consumer data: ${JSON.stringify(data)}`);
 
       response({

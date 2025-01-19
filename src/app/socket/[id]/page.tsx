@@ -7,6 +7,7 @@ import io, { Socket } from "socket.io-client";
 import mediasoupClient, { type types as mediaSoupTypes } from "mediasoup-client";
 
 import {
+  ConsumerData,
   ConsumeResponse,
   JoinRoomResponse,
   SOCKET_EVENTS,
@@ -244,37 +245,38 @@ export default function SocketPage() {
 
           console.log("Join Room Response -> List of producers:", JSON.stringify(producersList));
 
-          // for (const producerId of producersList!) {
-          //   console.log(`Processing existing producer with ID: ${producerId}`);
-          //   const [consumeError, consumeResult] = await safeEmitAsync<string>(
-          //     socketRef.current,
-          //     SOCKET_EVENTS.CONSUME,
-          //     {
-          //       roomId,
-          //       producerId,
-          //       transportId: recvTransportRef.current.id,
-          //     }
-          //   );
+          for (const producerId of producersList!) {
+            console.log(`Processing existing producer with ID: ${producerId}`);
 
-          //   if (consumeError) {
-          //     console.error("Failed to join room:", consumeError.message);
-          //     return;
-          //   }
+            const [consumeError, consumeResult] = await safeEmitAsync<ConsumerData>(
+              socketRef.current,
+              SOCKET_EVENTS.CONSUME,
+              {
+                roomId,
+                producerId,
+                transportId: recvTransportRef.current.id,
+              }
+            );
 
-          //   // Now create a consumer for that existing producer
-          //   const consumer = await recvTransportRef.current.consume(consumeResult);
-          //   const stream = new MediaStream([consumer.track]);
-          //   setRemoteStreams((prev) => ({ ...prev, [producerId]: stream }));
+            if (consumeError) {
+              console.error("Failed to join room:", consumeError.message);
+              return;
+            }
 
-          //   consumer.on("trackended", () => {
-          //     console.log(`Remote track ended for producer: ${producerId}`);
-          //     setRemoteStreams((prev) => {
-          //       const updated = { ...prev };
-          //       delete updated[producerId];
-          //       return updated;
-          //     });
-          //   });
-          // }
+            // Now create a consumer for that existing producer
+            const consumer = await recvTransportRef.current.consume(consumeResult);
+            const stream = new MediaStream([consumer.track]);
+            setRemoteStreams((prev) => ({ ...prev, [producerId]: stream }));
+
+            consumer.on("trackended", () => {
+              console.log(`Remote track ended for producer: ${producerId}`);
+              setRemoteStreams((prev) => {
+                const updated = { ...prev };
+                delete updated[producerId];
+                return updated;
+              });
+            });
+          }
         });
 
         s.on(SOCKET_EVENTS.CONNECT_ERROR, handleConnectError);
