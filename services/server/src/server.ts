@@ -7,8 +7,9 @@ import winston, { transport } from "winston";
 import mediasoup, { type types as mediaSoupTypes } from "mediasoup"; // { createWorker, types, etc. } as needed
 import { Room } from "./room";
 
-import { SOCKET_EVENTS, type SocketResponse, type TransportData } from "shared"; // adjust path as needed
+import { SOCKET_EVENTS, type ConsumerData, type SocketResponse, type TransportData } from "shared"; // adjust path as needed
 import type { WebRtcTransport, WebRtcTransportOptions } from "mediasoup/node/lib/WebRtcTransportTypes";
+import type { Consumer } from "mediasoup/node/lib/ConsumerTypes";
 
 const isDevelopment = process.env.NODE_ENV === "development";
 const PORT = process.env.PORT ?? 3001;
@@ -203,7 +204,7 @@ io.on("connection", (socket) => {
       const foundRoom = rooms.get(roomId);
 
       if (!foundRoom) {
-        logger.error(`Room not found for roomId: ${roomId}`);
+        logger.error(`Room not found for roomId: ${roomId} 207`);
         return response({ success: false, message: `Room not found for roomId: ${roomId}` });
       }
 
@@ -287,38 +288,44 @@ io.on("connection", (socket) => {
   /*********************************************************
    * 6) CONSUME
    *********************************************************/
-  socket.on(SOCKET_EVENTS.CONSUME, async ({ roomId, producerId, transportId }, response) => {
-    logger.info(
-      `Consume event received with inputs: roomId=${roomId}, producerId=${producerId}, transportId=${transportId}`
-    );
-    try {
+  socket.on(
+    SOCKET_EVENTS.CONSUME,
+    async ({ roomId, producerId, transportId }, response: SocketResponse<ConsumerData>) => {
+      logger.debug(
+        `Consume event received with inputs: roomId=${roomId}, producerId=${producerId}, transportId=${transportId}`
+      );
+
       const room = rooms.get(roomId);
       if (!room) {
         logger.error(`Room ${roomId} not found`);
         throw new Error(`Room ${roomId} not found`);
       }
-      logger.info(`Room ${roomId} found`);
+      logger.debug(`Room ${roomId} found`);
 
       const router = room.router;
+
       const transport = Array.from(room.transports.values())
         .flatMap((transportsMap) => Array.from(transportsMap.values()))
         .find((t) => t.id === transportId);
+
       if (!transport) {
         logger.error(`Transport with ID ${transportId} not found`);
         throw new Error(`Transport with ID ${transportId} not found`);
       }
-      logger.info(`Transport with ID ${transportId} found`);
+      logger.debug(`Transport with ID ${transportId} found`);
 
-      const producer = Array.from(room.producers.values())
-        .flatMap((producersMap) => Array.from(producersMap.entries()))
-        .find(([id]) => id === producerId)?.[1];
+      const producer =
+        Array.from(room.producers.values())
+          .flatMap((producersMap) => Array.from(producersMap.values()))
+          .find((entry) => entry.id === producerId) || null;
+      logger.debug(`Producer details: ${JSON.stringify(producer)}`);
 
       if (!producer) {
         logger.error(`Producer with ID ${producerId} not found`);
         throw new Error("Producer not found");
       }
 
-      logger.info(`Producer with ID ${producerId} found`);
+      logger.debug(`Producer with ID ${producerId} found`);
 
       // Create a Consumer
       const consumer = await transport.consume({
@@ -326,28 +333,33 @@ io.on("connection", (socket) => {
         rtpCapabilities: router.rtpCapabilities,
       });
 
-      logger.info(`Consumer created: consumerId=${consumer.id}, producerId=${producerId}`);
+      logger.debug(`Consumer created: consumerId=${consumer.id}, producerId=${producerId}`);
 
       // Add consumer to the map
       if (!room.consumers.has(socket.id)) {
         room.consumers.set(socket.id, new Map());
       }
       room.consumers.get(socket.id)?.set(consumer.id, consumer);
-      logger.info(`Consumer added to room: consumerId=${consumer.id}, socketId=${socket.id}`);
+      logger.debug(`Consumer added to room: consumerId=${consumer.id}, socketId=${socket.id}`);
+      const data: ConsumerData = {
+        id: consumer.id,
+        producerId: consumer.producerId,
+        kind: consumer.kind,
+        rtpParameters: consumer.rtpParameters,
+        type: consumer.type,
+      };
+      logger.info(`Consumer data: ${JSON.stringify(data)}`);
 
       response({
         success: true,
-        data: consumer,
+        data,
       });
 
       consumer.on("transportclose", () => {
-        logger.info(`Consumer transport closed: consumerId=${consumer.id}`);
+        logger.debug(`Consumer transport closed: consumerId=${consumer.id}`);
       });
-    } catch (error: any) {
-      logger.error("Error creating consumer:", error.message);
-      response({ success: false, message: error.message });
     }
-  });
+  );
 
   /*********************************************************
    * DISCONNECT

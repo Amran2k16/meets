@@ -57,3 +57,11 @@ export type TransportData = {
   dtlsParameters: mediaSoupTypes.DtlsParameters;
   sctpParameters?: mediaSoupTypes.SctpParameters;
 };
+
+export type ConsumerData = {
+  id: string;
+  producerId: string;
+  kind: string;
+  rtpParameters: mediaSoupTypes.RtpParameters;
+  type: string;
+};
