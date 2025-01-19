@@ -108,9 +108,10 @@ io.on("connection", (socket) => {
     logger.info(`Socket ${socket.id} joined room: ${roomId}`);
 
     // Collect the IDs of any existing producers
-    const existingProducerIds = Array.from(room.producers.values()).flatMap((producersMap) =>
-      Array.from(producersMap.keys())
-    );
+    const existingProducerIds = Array.from(room.producers.entries())
+      .filter(([producerSocketId]) => producerSocketId !== socket.id)
+      .flatMap(([, producersMap]) => Array.from(producersMap.keys()));
+
     logger.info(`Existing producers in room ${roomId}: ${existingProducerIds.join(", ")}`);
 
     // Send back success + the existing producer IDs

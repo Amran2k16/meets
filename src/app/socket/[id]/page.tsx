@@ -246,7 +246,10 @@ export default function SocketPage() {
           console.log("Join Room Response -> List of producers:", JSON.stringify(producersList));
 
           for (const producerId of producersList!) {
-            console.log(`Processing existing producer with ID: ${producerId}`);
+            if (producerId === sendTransportRef.current.id) {
+              console.log(`Skipping own producer with ID: ${producerId}`);
+              continue;
+            }
 
             const [consumeError, consumeResult] = await safeEmitAsync<ConsumerData>(
               socketRef.current,
