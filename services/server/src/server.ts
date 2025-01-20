@@ -273,7 +273,7 @@ io.on("connection", (socket) => {
     response({ success: true, data: { id: producer.id } });
 
     // Notify other clients in the same room
-    socket.broadcast.to(roomId).emit(SOCKET_EVENTS.NEW_PRODUCER, { producerId: producer.id });
+    socket.broadcast.to(roomId).emit(SOCKET_EVENTS.NEW_PRODUCER, { socketId: socket.id, producerId: producer.id });
 
     // Clean up on transport close
     producer.on("transportclose", () => {
